@@ -1,0 +1,27 @@
+{
+  "name": "yieldmind",
+  "version": "0.1.0",
+  "private": true,
+  "description": "YieldMind Protocol — Autonomous DeFi Coordination Layer for Hedera",
+  "scripts": {
+    "dev:agents": "cd agents && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "build:agents": "cd agents && npm run build",
+    "build:web": "cd web && npm run build",
+    "build": "npm run build:agents && npm run build:web",
+    "test": "cd agents && npm test",
+    "lint": "cd agents && npm run lint && cd ../web && npm run lint"
+  },
+  "keywords": [
+    "hedera",
+    "defi",
+    "ai-agents",
+    "bonzo",
+    "hcs",
+    "hts",
+    "yield",
+    "autonomous"
+  ],
+  "author": "Farouk",
+  "license": "MIT"
+}
