@@ -1,7 +1,9 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import { Search, Brain, Zap, Shield } from 'lucide-react';
 import type { AgentState, AgentRole } from '@/lib/types';
+import type { LucideIcon } from 'lucide-react';
 
 interface AgentStatusPanelProps {
   agents: AgentState[];
@@ -9,36 +11,44 @@ interface AgentStatusPanelProps {
 
 const AGENT_CONFIG: Record<
   AgentRole,
-  { label: string; icon: string; description: string }
+  { label: string; icon: LucideIcon; color: string; badgeBg: string; description: string }
 > = {
   scout: {
     label: 'Scout',
-    icon: '🔍',
+    icon: Search,
+    color: 'text-supply',
+    badgeBg: 'bg-badge-supply',
     description: 'Vault scanner',
   },
   strategist: {
     label: 'Strategist',
-    icon: '🧠',
+    icon: Brain,
+    color: 'text-accent',
+    badgeBg: 'bg-badge-accent',
     description: 'Strategy builder',
   },
   executor: {
     label: 'Executor',
-    icon: '⚡',
+    icon: Zap,
+    color: 'text-borrow',
+    badgeBg: 'bg-badge-borrow',
     description: 'On-chain executor',
   },
   sentinel: {
     label: 'Sentinel',
-    icon: '🛡️',
+    icon: Shield,
+    color: 'text-danger',
+    badgeBg: 'bg-badge-danger',
     description: 'Position monitor',
   },
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  idle: 'bg-gray-500',
-  thinking: 'bg-cyan-400 pulse-dot',
-  executing: 'bg-amber-400 pulse-dot',
-  waiting: 'bg-yellow-400',
-  error: 'bg-red-500',
+  idle: 'bg-text-muted',
+  thinking: 'bg-accent',
+  executing: 'bg-borrow',
+  waiting: 'bg-points',
+  error: 'bg-danger',
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -53,10 +63,10 @@ export function AgentStatusPanel({ agents }: AgentStatusPanelProps) {
   return (
     <div>
       <div className="flex items-center gap-2 mb-3">
-        <h3 className="font-heading text-xs font-semibold text-gray-400 uppercase tracking-wider">
+        <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
           Agent Network
         </h3>
-        <span className="text-[10px] text-gray-600">
+        <span className="text-[11px] text-text-muted">
           {agents.filter((a) => a.status !== 'idle').length}/{agents.length}{' '}
           active
         </span>
@@ -65,28 +75,32 @@ export function AgentStatusPanel({ agents }: AgentStatusPanelProps) {
       <div className="space-y-2">
         {agents.map((agent, i) => {
           const config = AGENT_CONFIG[agent.role];
+          const Icon = config.icon;
+          const isActive = agent.status === 'thinking' || agent.status === 'executing';
           return (
             <motion.div
               key={agent.id}
-              initial={{ opacity: 0, x: 20 }}
+              initial={{ opacity: 0, x: 12 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: i * 0.1 }}
-              className="flex items-center gap-3 bg-navy-800/50 border border-navy-600/50 rounded-lg px-3 py-2"
+              className="flex items-center gap-3 glass-card px-3 py-2.5"
             >
-              <span className="text-base">{config.icon}</span>
+              <div className={`rounded-full ${config.badgeBg} p-1.5`}>
+                <Icon className={`w-3.5 h-3.5 ${config.color}`} />
+              </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-gray-300">
+                  <span className="text-sm font-medium text-text-primary">
                     {config.label}
                   </span>
                   <div
-                    className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[agent.status]}`}
+                    className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[agent.status]} ${isActive ? 'animate-pulse' : ''}`}
                   />
-                  <span className="text-[10px] text-gray-500">
+                  <span className="text-[11px] text-text-muted">
                     {STATUS_LABELS[agent.status]}
                   </span>
                 </div>
-                <p className="text-[10px] text-gray-600 truncate">
+                <p className="text-[11px] text-text-muted truncate">
                   {agent.lastAction ?? config.description}
                 </p>
               </div>

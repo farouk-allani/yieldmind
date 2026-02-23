@@ -13,40 +13,40 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
+      initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
+      transition={{ duration: 0.2 }}
       className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}
     >
       <div
-        className={`max-w-[80%] rounded-lg px-4 py-3 ${
+        className={`max-w-[80%] rounded-[8px] px-4 py-3 ${
           isUser
-            ? 'bg-cyan-400/10 border border-cyan-400/30 text-cyan-400'
+            ? 'bg-surface border border-border-subtle text-text-primary'
             : isSystem
-              ? 'bg-amber-400/10 border border-amber-400/30 text-amber-400'
-              : 'bg-navy-700 border border-navy-600 text-gray-200'
+              ? 'bg-card border border-border-subtle text-text-secondary'
+              : 'glass-card text-text-primary'
         }`}
       >
         {/* Role label */}
         <div
-          className={`text-[10px] uppercase tracking-widest mb-1 ${
+          className={`text-[11px] font-medium mb-1 ${
             isUser
-              ? 'text-cyan-400/60'
+              ? 'text-text-muted'
               : isSystem
-                ? 'text-amber-400/60'
-                : 'text-gray-500'
+                ? 'text-borrow'
+                : 'text-accent'
           }`}
         >
           {isUser ? 'You' : isSystem ? 'System' : 'YieldMind'}
         </div>
 
-        {/* Message content with markdown-like bold */}
+        {/* Message content */}
         <div className="text-sm leading-relaxed whitespace-pre-wrap">
           {renderContent(message.content)}
         </div>
 
         {/* Timestamp */}
-        <div className="text-[10px] text-gray-600 mt-2">
+        <div className="text-[11px] text-text-muted mt-2">
           {new Date(message.timestamp).toLocaleTimeString()}
         </div>
       </div>
@@ -55,12 +55,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 }
 
 function renderContent(text: string) {
-  // Simple bold rendering for **text**
   const parts = text.split(/(\*\*.*?\*\*)/g);
   return parts.map((part, i) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       return (
-        <span key={i} className="font-semibold text-cyan-400">
+        <span key={i} className="font-semibold text-text-primary">
           {part.slice(2, -2)}
         </span>
       );

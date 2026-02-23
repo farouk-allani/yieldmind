@@ -5,31 +5,38 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        navy: {
-          900: '#0a0f1e',
-          800: '#111827',
-          700: '#1a2332',
-          600: '#243044',
+        page: '#0B0E17',
+        surface: {
+          DEFAULT: '#171923',
+          hover: '#1D202C',
         },
-        cyan: {
-          400: '#00f0ff',
-          500: '#00d4e0',
+        card: {
+          DEFAULT: 'rgba(255,255,255,0.03)',
+          hover: 'rgba(255,255,255,0.02)',
         },
-        amber: {
-          400: '#f59e0b',
-          500: '#d97706',
+        border: {
+          subtle: 'rgba(255,255,255,0.1)',
+        },
+        text: {
+          primary: '#F7F6F0',
+          secondary: 'rgba(247,246,240,0.75)',
+          muted: 'rgba(247,246,240,0.45)',
+        },
+        supply: '#10B981',
+        borrow: '#FFA500',
+        accent: '#3B82F6',
+        points: '#FACC15',
+        danger: '#EF4444',
+        badge: {
+          supply: '#103A2E',
+          borrow: '#462704',
+          accent: '#1E3A5F',
+          danger: '#3B1111',
         },
       },
       fontFamily: {
-        mono: ['JetBrains Mono', 'monospace'],
-        heading: ['Space Grotesk', 'sans-serif'],
-      },
-      backgroundImage: {
-        'grid-pattern':
-          'linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px)',
-      },
-      backgroundSize: {
-        grid: '40px 40px',
+        display: ['Inter', 'Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
       },
     },
   },

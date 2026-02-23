@@ -14,13 +14,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>
-        {/* Scanline overlay */}
-        <div className="fixed inset-0 scanline z-50 pointer-events-none" />
-        {/* Grid background */}
-        <div className="fixed inset-0 bg-grid-pattern bg-grid -z-10" />
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

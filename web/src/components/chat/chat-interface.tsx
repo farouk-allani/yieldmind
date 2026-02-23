@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Send, MessageSquare } from 'lucide-react';
 import { MessageBubble } from './message-bubble';
 import type { ChatMessage, Strategy } from '@/lib/types';
 import { sendChatMessage, executeStrategy } from '@/lib/api';
@@ -43,7 +44,6 @@ export function ChatInterface({
     const trimmed = input.trim();
     if (!trimmed || isLoading) return;
 
-    // Check if user is approving execution
     const isApproval =
       pendingStrategy &&
       (trimmed.toLowerCase().includes('yes') ||
@@ -117,13 +117,13 @@ export function ChatInterface({
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex-shrink-0 border-b border-cyan-400/10 px-5 py-3">
-        <div className="flex items-center gap-3">
-          <div className="w-2 h-2 rounded-full bg-cyan-400 pulse-dot" />
-          <h2 className="font-heading text-sm font-semibold text-gray-300 uppercase tracking-wider">
+      <div className="flex-shrink-0 border-b border-border-subtle px-5 py-3">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="w-4 h-4 text-text-muted" />
+          <h2 className="text-sm font-medium text-text-secondary">
             Agent Chat
           </h2>
-          <span className="text-[10px] text-gray-600 ml-auto font-mono">
+          <span className="text-[11px] text-text-muted ml-auto">
             {sessionId}
           </span>
         </div>
@@ -141,12 +141,12 @@ export function ChatInterface({
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="flex items-center gap-2 text-cyan-400/60 text-sm pl-1"
+            className="flex items-center gap-2 text-text-muted text-sm pl-1"
           >
             <div className="flex gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400/60 animate-bounce" style={{ animationDelay: '0ms' }} />
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400/60 animate-bounce" style={{ animationDelay: '150ms' }} />
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400/60 animate-bounce" style={{ animationDelay: '300ms' }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-accent/60 animate-bounce" style={{ animationDelay: '0ms' }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-accent/60 animate-bounce" style={{ animationDelay: '150ms' }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-accent/60 animate-bounce" style={{ animationDelay: '300ms' }} />
             </div>
             <span>Agents coordinating...</span>
           </motion.div>
@@ -156,7 +156,7 @@ export function ChatInterface({
       </div>
 
       {/* Input */}
-      <div className="flex-shrink-0 border-t border-cyan-400/10 px-5 py-4">
+      <div className="flex-shrink-0 border-t border-border-subtle px-5 py-4">
         <div className="flex gap-3">
           <input
             ref={inputRef}
@@ -170,13 +170,14 @@ export function ChatInterface({
                 : 'Describe your yield intent...'
             }
             disabled={isLoading}
-            className="flex-1 bg-navy-800 border border-cyan-400/20 rounded-lg px-4 py-2.5 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-400/50 focus:ring-1 focus:ring-cyan-400/20 transition-colors disabled:opacity-50"
+            className="flex-1 bg-surface border border-border-subtle rounded-[8px] px-4 py-2.5 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent/50 transition-colors disabled:opacity-50"
           />
           <button
             onClick={handleSend}
             disabled={isLoading || !input.trim()}
-            className="px-5 py-2.5 bg-cyan-400/10 border border-cyan-400/30 rounded-lg text-cyan-400 text-sm font-semibold hover:bg-cyan-400/20 hover:border-cyan-400/50 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+            className="h-[42px] px-4 bg-accent hover:bg-accent/90 rounded-[8px] text-text-primary text-sm font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-2"
           >
+            <Send className="w-4 h-4" />
             Send
           </button>
         </div>
