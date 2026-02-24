@@ -1,5 +1,6 @@
 import { HederaClient } from './hedera/client.js';
 import { HCSService } from './hedera/hcs.js';
+import { BonzoVaultClient } from './bonzo/vault-client.js';
 import { ScoutAgent } from './agents/scout.js';
 import { StrategistAgent } from './agents/strategist.js';
 import { ExecutorAgent } from './agents/executor.js';
@@ -32,8 +33,11 @@ export function createRuntime() {
     );
   }
 
+  // Bonzo vault data client (real mainnet data)
+  const bonzoClient = new BonzoVaultClient();
+
   // Initialize agents with dependency injection
-  const scout = new ScoutAgent(hcsService);
+  const scout = new ScoutAgent(hcsService, bonzoClient);
   const strategist = new StrategistAgent(hcsService);
   const executor = new ExecutorAgent(hcsService, hederaClient);
   const sentinel = new SentinelAgent(hcsService);
