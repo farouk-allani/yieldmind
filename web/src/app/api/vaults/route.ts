@@ -1,14 +1,27 @@
 import { NextResponse } from 'next/server';
-import { MOCK_VAULTS } from '@/lib/mock-data';
+import { agentRuntime, getRuntimeError } from '@/lib/runtime';
 
 export async function GET() {
   try {
-    // TODO: When agent backend is available, replace with:
-    //   const runtime = getRuntime();
-    //   const vaults = await runtime.agents.scout.fetchVaults();
+    if (!agentRuntime) {
+      return NextResponse.json(
+        {
+          error: `Agent runtime not initialized: ${getRuntimeError() || 'Check Hedera credentials in .env'}`,
+        },
+        { status: 503 }
+      );
+    }
+
+    // Use the Scout agent to fetch real vault data
+    const scoutDecision = await agentRuntime.agents.scout.execute({
+      riskTolerance: 'moderate',
+      tokenSymbol: 'HBAR',
+    });
+
+    const vaults = scoutDecision.data.topVaults || [];
 
     return NextResponse.json({
-      vaults: MOCK_VAULTS,
+      vaults,
       lastUpdated: new Date().toISOString(),
     });
   } catch (error) {

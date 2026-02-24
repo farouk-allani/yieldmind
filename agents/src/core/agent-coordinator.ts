@@ -41,6 +41,7 @@ export class AgentCoordinator {
   private sentinel: SentinelAgent;
   private sessionTopicId: string | null = null;
   private decisions: DecisionLog[] = [];
+  private lastStrategy: Strategy | null = null;
 
   constructor(deps: CoordinatorDeps) {
     this.hcsService = deps.hcsService;
@@ -95,6 +96,9 @@ export class AgentCoordinator {
     this.decisions.push(strategistDecision);
 
     const strategy = strategistDecision.data.strategy as Strategy | undefined;
+    if (strategy) {
+      this.lastStrategy = strategy;
+    }
 
     return {
       message: this.formatStrategyMessage(strategistDecision, strategy),
@@ -146,6 +150,13 @@ export class AgentCoordinator {
       this.executor.getState(),
       this.sentinel.getState(),
     ];
+  }
+
+  /**
+   * Get the last proposed strategy (for execute flow)
+   */
+  getLastStrategy(): Strategy | null {
+    return this.lastStrategy;
   }
 
   /**

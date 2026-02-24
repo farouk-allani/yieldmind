@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "description": "YieldMind Protocol — Autonomous DeFi Coordination Layer for Hedera",
+  "workspaces": [
+    "agents",
+    "web"
+  ],
   "scripts": {
     "dev:agents": "cd agents && npm run dev",
     "dev:web": "cd web && npm run dev",

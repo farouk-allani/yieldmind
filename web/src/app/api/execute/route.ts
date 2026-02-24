@@ -1,29 +1,55 @@
 import { NextResponse } from 'next/server';
-import { createMockExecuteResponse } from '@/lib/mock-data';
+import { agentRuntime, getRuntimeError } from '@/lib/runtime';
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { strategyId, sessionId } = body;
+    const { sessionId } = body;
 
-    if (!strategyId || !sessionId) {
+    if (!sessionId) {
       return NextResponse.json(
-        { error: 'strategyId and sessionId are required' },
+        { error: 'sessionId is required' },
         { status: 400 }
       );
     }
 
-    // TODO: When agent backend is available, replace with:
-    //   const runtime = getRuntime();
-    //   const response = await runtime.coordinator.executeStrategy(strategy, sessionId);
+    if (!agentRuntime) {
+      return NextResponse.json(
+        {
+          error: `Agent runtime not initialized: ${getRuntimeError() || 'Check Hedera credentials in .env'}`,
+        },
+        { status: 503 }
+      );
+    }
 
-    const response = createMockExecuteResponse(sessionId);
+    // Retrieve the last proposed strategy from the coordinator
+    const strategy = agentRuntime.coordinator.getLastStrategy();
+
+    if (!strategy) {
+      return NextResponse.json(
+        {
+          error:
+            'No strategy found. Send a chat message first to generate a strategy.',
+        },
+        { status: 404 }
+      );
+    }
+
+    const response = await agentRuntime.coordinator.executeStrategy(
+      strategy,
+      sessionId
+    );
 
     return NextResponse.json(response);
   } catch (error) {
     console.error('[API /execute] Error:', error);
     return NextResponse.json(
-      { error: 'Failed to execute strategy' },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to execute strategy',
+      },
       { status: 500 }
     );
   }

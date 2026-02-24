@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "./src/index.ts",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/cli.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest",
@@ -12,9 +13,6 @@
   },
   "dependencies": {
     "@hashgraph/sdk": "^2.51.0",
-    "@langchain/anthropic": "^0.3.0",
-    "@langchain/core": "^0.3.0",
-    "langchain": "^0.3.0",
     "uuid": "^10.0.0",
     "dotenv": "^16.4.0"
   },

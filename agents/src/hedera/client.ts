@@ -4,10 +4,7 @@ import {
   PrivateKey,
   Hbar,
   TransferTransaction,
-  TopicCreateTransaction,
-  TopicMessageSubmitTransaction,
-  TopicId,
-  TransactionReceipt,
+  AccountBalanceQuery,
 } from '@hashgraph/sdk';
 import type { TransactionResult } from '../types';
 
@@ -81,8 +78,9 @@ export class HederaClient {
    * Get account HBAR balance
    */
   async getBalance(): Promise<number> {
-    const balance = await this.client
-      .getAccountBalance(this.accountId)
+    const balance = await new AccountBalanceQuery()
+      .setAccountId(this.accountId)
+      .execute(this.client)
       .catch(() => null);
     return balance ? balance.hbars.toBigNumber().toNumber() : 0;
   }

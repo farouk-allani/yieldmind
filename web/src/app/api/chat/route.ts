@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createMockChatResponse } from '@/lib/mock-data';
+import { agentRuntime, parseIntent, getRuntimeError } from '@/lib/runtime';
 
 export async function POST(request: Request) {
   try {
@@ -15,18 +15,28 @@ export async function POST(request: Request) {
 
     const sid = sessionId || `session-${Date.now()}`;
 
-    // TODO: When agent backend is available, replace with:
-    //   const runtime = getRuntime();
-    //   const intent = parseUserIntent(message, sid);
-    //   const response = await runtime.coordinator.processIntent(intent);
+    if (!agentRuntime) {
+      return NextResponse.json(
+        {
+          error: `Agent runtime not initialized: ${getRuntimeError() || 'Check Hedera credentials in .env'}`,
+        },
+        { status: 503 }
+      );
+    }
 
-    const response = createMockChatResponse(message, sid);
+    const intent = await parseIntent(message, sid);
+    const response = await agentRuntime.coordinator.processIntent(intent);
 
     return NextResponse.json(response);
   } catch (error) {
     console.error('[API /chat] Error:', error);
     return NextResponse.json(
-      { error: 'Failed to process chat message' },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Failed to process chat message',
+      },
       { status: 500 }
     );
   }

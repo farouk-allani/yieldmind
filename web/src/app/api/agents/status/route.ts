@@ -1,13 +1,18 @@
 import { NextResponse } from 'next/server';
-import { createMockAgentStates } from '@/lib/mock-data';
+import { agentRuntime, getRuntimeError } from '@/lib/runtime';
 
 export async function GET() {
   try {
-    // TODO: When agent backend is available, replace with:
-    //   const runtime = getRuntime();
-    //   const agents = runtime.coordinator.getAgentStates();
+    if (!agentRuntime) {
+      return NextResponse.json(
+        {
+          error: `Agent runtime not initialized: ${getRuntimeError() || 'Check Hedera credentials in .env'}`,
+        },
+        { status: 503 }
+      );
+    }
 
-    const agents = createMockAgentStates();
+    const agents = agentRuntime.coordinator.getAgentStates();
 
     return NextResponse.json({ agents });
   } catch (error) {
