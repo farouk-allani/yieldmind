@@ -1,19 +1,23 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Activity, Radio } from 'lucide-react';
+import { Activity, Radio, Database } from 'lucide-react';
 import { ChatInterface } from '@/components/chat/chat-interface';
 import { AgentStatusPanel } from '@/components/dashboard/agent-status';
 import { DecisionLogPanel } from '@/components/dashboard/decision-log';
+import { fetchAgentStatus } from '@/lib/api';
 import type { AgentState, DecisionLog } from '@/lib/types';
-import { createMockAgentStates } from '@/lib/mock-data';
 
 export default function AppPage() {
   const [agents, setAgents] = useState<AgentState[]>([]);
   const [decisions, setDecisions] = useState<DecisionLog[]>([]);
 
   useEffect(() => {
-    setAgents(createMockAgentStates());
+    fetchAgentStatus()
+      .then(setAgents)
+      .catch(() => {
+        // Agent backend not ready yet — will populate after first chat
+      });
   }, []);
 
   return (
@@ -36,6 +40,10 @@ export default function AppPage() {
           </div>
 
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[8px] bg-supply/10 text-[11px] text-supply font-medium">
+              <Database className="w-3 h-3" />
+              Live Mainnet Data
+            </div>
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-supply" />
               <span className="text-[11px] text-text-secondary">

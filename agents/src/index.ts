@@ -38,7 +38,7 @@ export function createRuntime() {
 
   // Initialize agents with dependency injection
   const scout = new ScoutAgent(hcsService, bonzoClient);
-  const strategist = new StrategistAgent(hcsService);
+  const strategist = new StrategistAgent(hcsService, llmClient);
   const executor = new ExecutorAgent(hcsService, hederaClient);
   const sentinel = new SentinelAgent(hcsService);
 

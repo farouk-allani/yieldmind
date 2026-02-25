@@ -1,7 +1,7 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { FileText } from 'lucide-react';
+import { FileText, ExternalLink } from 'lucide-react';
 import type { DecisionLog, AgentRole } from '@/lib/types';
 
 interface DecisionLogPanelProps {
@@ -28,6 +28,19 @@ function getConfidenceColor(confidence: number): string {
   return 'text-danger';
 }
 
+function getDataSourceLabel(data: Record<string, unknown>): string | null {
+  if (data.dataSource === 'bonzo-mainnet-live') return 'Live Data';
+  if (data.transactionId) return 'On-Chain';
+  return null;
+}
+
+function getHashScanUrl(data: Record<string, unknown>): string | null {
+  if (typeof data.hashscanUrl === 'string') return data.hashscanUrl;
+  const results = data.results as Array<{ hashscanUrl?: string }> | undefined;
+  if (results?.[0]?.hashscanUrl) return results[0].hashscanUrl;
+  return null;
+}
+
 export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
   const sortedDecisions = [...decisions].sort(
     (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
@@ -44,8 +57,8 @@ export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
           {decisions.length} logged
         </span>
         <div className="ml-auto flex items-center gap-1.5 px-2 py-0.5 rounded-[8px] bg-surface">
-          <div className="w-1 h-1 rounded-full bg-supply" />
-          <span className="text-[11px] text-text-muted">HCS</span>
+          <div className="w-1 h-1 rounded-full bg-supply animate-pulse" />
+          <span className="text-[11px] text-text-muted">HCS On-Chain</span>
         </div>
       </div>
 
@@ -58,6 +71,9 @@ export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
           ) : (
             sortedDecisions.map((decision, i) => {
               const roleColor = ROLE_COLORS[decision.agentRole];
+              const dataSource = getDataSourceLabel(decision.data);
+              const hashscanUrl = getHashScanUrl(decision.data);
+
               return (
                 <motion.div
                   key={`${decision.agentId}-${decision.timestamp}-${i}`}
@@ -75,6 +91,11 @@ export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
                     <span className="text-[11px] text-text-secondary">
                       {decision.action}
                     </span>
+                    {dataSource && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-[4px] bg-supply/10 text-supply font-medium">
+                        {dataSource}
+                      </span>
+                    )}
                     <span className="text-[11px] text-text-muted ml-auto">
                       {new Date(decision.timestamp).toLocaleTimeString()}
                     </span>
@@ -91,6 +112,17 @@ export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
                         {(decision.confidence * 100).toFixed(0)}%
                       </span>
                     </span>
+                    {hashscanUrl && (
+                      <a
+                        href={hashscanUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-[11px] text-accent hover:text-accent/80 transition-colors ml-auto"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        HashScan
+                      </a>
+                    )}
                   </div>
                 </motion.div>
               );

@@ -1,6 +1,6 @@
-import { BaseAgent } from '../core/base-agent';
-import type { HCSService } from '../hedera/hcs';
-import type { DecisionLog, Strategy, SentinelAlert } from '../types';
+import { BaseAgent } from '../core/base-agent.js';
+import type { HCSService } from '../hedera/hcs.js';
+import type { DecisionLog, Strategy, SentinelAlert } from '../types/index.js';
 
 interface SentinelInput {
   strategy: Strategy;

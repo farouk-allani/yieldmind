@@ -4,8 +4,8 @@ import type {
   AgentStatus,
   DecisionLog,
   HCSMessageType,
-} from '../types';
-import type { HCSService } from '../hedera/hcs';
+} from '../types/index.js';
+import type { HCSService } from '../hedera/hcs.js';
 
 /**
  * BaseAgent — Abstract foundation for all YieldMind agents.

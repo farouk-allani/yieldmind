@@ -1,5 +1,6 @@
-import { BaseAgent } from '../core/base-agent';
-import type { HCSService } from '../hedera/hcs';
+import { BaseAgent } from '../core/base-agent.js';
+import type { HCSService } from '../hedera/hcs.js';
+import type { LLMClient } from '../core/llm-client.js';
 import type {
   DecisionLog,
   UserIntent,
@@ -7,12 +8,18 @@ import type {
   Strategy,
   VaultStrategy,
   RiskTolerance,
-} from '../types';
+} from '../types/index.js';
 
 interface StrategistInput {
   intent: UserIntent;
   vaultScanResults: Record<string, unknown>;
 }
+
+const STRATEGIST_PROMPT = `You are YieldMind's DeFi Strategist AI running on Hedera. You analyze vault data from Bonzo Finance and build optimal yield strategies.
+
+Given the user's intent and available vault data, explain your strategy reasoning in 2-3 sentences. Be specific about WHY you chose these vaults and allocations. Mention concrete data: APY rates, TVL, risk levels. Your reasoning will be published on-chain via Hedera Consensus Service for full transparency.
+
+Respond with ONLY the reasoning text (no JSON, no markdown). Keep it under 200 words. Sound like a professional financial advisor, not an AI chatbot.`;
 
 /**
  * StrategistAgent — The brain of YieldMind.
@@ -20,12 +27,16 @@ interface StrategistInput {
  * Takes user intent + scout's vault scan data, and produces an
  * optimal multi-vault strategy with allocation percentages.
  *
- * In production: uses LLM (Claude) for nuanced intent interpretation.
- * For MVP: rule-based strategy builder with clear reasoning.
+ * Uses LLM (via OpenRouter) for nuanced strategy reasoning.
+ * Rule-based allocation logic ensures deterministic, correct strategies.
+ * LLM generates the human-readable reasoning published to HCS.
  */
 export class StrategistAgent extends BaseAgent {
-  constructor(hcsService: HCSService) {
+  private llmClient: LLMClient | null;
+
+  constructor(hcsService: HCSService, llmClient: LLMClient | null = null) {
     super('strategist', hcsService);
+    this.llmClient = llmClient;
   }
 
   async execute(input: unknown): Promise<DecisionLog> {
@@ -48,9 +59,15 @@ export class StrategistAgent extends BaseAgent {
         );
       }
 
-      // Build strategy based on risk tolerance
+      // Rule-based allocation (deterministic, always correct)
       const strategy = this.buildStrategy(intent, topVaults);
-      const reasoning = this.buildReasoning(intent, strategy);
+
+      // LLM-powered reasoning (transparent AI differentiator)
+      const reasoning = await this.generateReasoning(
+        intent,
+        strategy,
+        topVaults
+      );
 
       const decision = this.createDecision(
         'strategy-proposed',
@@ -189,7 +206,67 @@ export class StrategistAgent extends BaseAgent {
     return Math.min(confidence, 0.95);
   }
 
-  private buildReasoning(intent: UserIntent, strategy: Strategy): string {
+  /**
+   * Generate strategy reasoning using LLM, with rule-based fallback.
+   * The reasoning is published to HCS — this is the "transparent AI" value.
+   */
+  private async generateReasoning(
+    intent: UserIntent,
+    strategy: Strategy,
+    vaults: (VaultInfo & { score: number })[]
+  ): Promise<string> {
+    if (this.llmClient) {
+      try {
+        const vaultSummary = strategy.vaults
+          .map(
+            (v) =>
+              `${v.vaultName}: ${v.allocation}% allocation, ${v.expectedApy.toFixed(2)}% weighted APY, ${v.riskLevel} risk`
+          )
+          .join('\n');
+
+        const availableVaults = vaults
+          .slice(0, 5)
+          .map(
+            (v) =>
+              `${v.name}: ${v.apy.toFixed(2)}% APY, $${(v.tvl / 1_000_000).toFixed(2)}M TVL, ${v.riskLevel} risk, score ${v.score.toFixed(2)}`
+          )
+          .join('\n');
+
+        const userContext = `User request: "${intent.rawMessage}"
+Risk tolerance: ${intent.riskTolerance}
+Amount: ${intent.targetAmount} ${intent.tokenSymbol}
+
+Available vaults (from Bonzo Finance, live mainnet data):
+${availableVaults}
+
+Chosen strategy (${strategy.vaults.length} vaults, ${strategy.totalExpectedApy.toFixed(2)}% blended APY):
+${vaultSummary}`;
+
+        const response = await this.llmClient.chat([
+          { role: 'system', content: STRATEGIST_PROMPT },
+          { role: 'user', content: userContext },
+        ]);
+
+        const reasoning = response.content.trim();
+        if (reasoning.length > 20) {
+          console.log('[Strategist] LLM reasoning generated successfully');
+          return reasoning;
+        }
+      } catch (error) {
+        console.log(
+          '[Strategist] LLM reasoning failed, using rule-based:',
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+
+    return this.buildFallbackReasoning(intent, strategy);
+  }
+
+  private buildFallbackReasoning(
+    intent: UserIntent,
+    strategy: Strategy
+  ): string {
     const vaultNames = strategy.vaults
       .map((v) => `${v.vaultName} (${v.allocation}%)`)
       .join(', ');

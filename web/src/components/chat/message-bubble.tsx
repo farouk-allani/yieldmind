@@ -55,13 +55,28 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 }
 
 function renderContent(text: string) {
-  const parts = text.split(/(\*\*.*?\*\*)/g);
+  // Split on bold markers AND URLs
+  const parts = text.split(/(\*\*.*?\*\*|https?:\/\/[^\s]+)/g);
   return parts.map((part, i) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       return (
         <span key={i} className="font-semibold text-text-primary">
           {part.slice(2, -2)}
         </span>
+      );
+    }
+    if (part.startsWith('http://') || part.startsWith('https://')) {
+      const isHashScan = part.includes('hashscan.io');
+      return (
+        <a
+          key={i}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-accent hover:text-accent/80 underline underline-offset-2 transition-colors"
+        >
+          {isHashScan ? 'View on HashScan' : part}
+        </a>
       );
     }
     return <span key={i}>{part}</span>;

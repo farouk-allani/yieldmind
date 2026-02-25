@@ -3,8 +3,8 @@ import {
   TopicMessageSubmitTransaction,
   TopicId,
 } from '@hashgraph/sdk';
-import type { HCSMessage, DecisionLog, HCSMessageType } from '../types';
-import { HederaClient } from './client';
+import type { HCSMessage, DecisionLog, HCSMessageType } from '../types/index.js';
+import { HederaClient } from './client.js';
 
 const MIRROR_NODE_URL =
   process.env.HEDERA_MIRROR_NODE_URL ||
@@ -40,9 +40,13 @@ export class HCSService {
   }
 
   /**
-   * Publish an agent decision to an HCS topic
+   * Publish an agent decision to an HCS topic.
    * This is the core of the "transparent AI" differentiator —
    * every agent decision is permanently logged on Hedera consensus.
+   *
+   * HCS has a 1024-byte message limit. We publish a compact version
+   * with the reasoning (the human-readable part) and core metadata.
+   * The full data payload stays in the application layer.
    */
   async publishDecision(
     topicId: string,
@@ -51,40 +55,73 @@ export class HCSService {
   ): Promise<string> {
     const client = this.hederaClient.getClient();
 
-    const message: HCSMessage = {
-      type,
-      payload: decision,
-    };
+    // Build a compact HCS payload that fits within 1024 bytes.
+    // The reasoning is what matters on-chain — it's the transparency proof.
+    const hcsPayload = this.buildCompactPayload(type, decision);
+    const messageBytes = Buffer.from(JSON.stringify(hcsPayload), 'utf-8');
 
-    const messageBytes = Buffer.from(JSON.stringify(message), 'utf-8');
-
-    // HCS messages have a 1024-byte limit per chunk.
-    // For larger payloads, we'd need chunking. For MVP, keep decisions concise.
     if (messageBytes.length > 1024) {
+      // If STILL too large, aggressively truncate reasoning
+      hcsPayload.reasoning = hcsPayload.reasoning.substring(0, 100) + '...';
+      const finalBytes = Buffer.from(JSON.stringify(hcsPayload), 'utf-8');
       console.warn(
-        `HCS message exceeds 1024 bytes (${messageBytes.length}). Truncating reasoning.`
+        `[HCS] Payload compressed to ${finalBytes.length} bytes for topic ${topicId}`
       );
-      decision.reasoning = decision.reasoning.substring(0, 200) + '...';
-      const truncated = Buffer.from(
-        JSON.stringify({ type, payload: decision }),
-        'utf-8'
-      );
-      const response = await new TopicMessageSubmitTransaction()
-        .setTopicId(TopicId.fromString(topicId))
-        .setMessage(truncated)
-        .execute(client);
-
-      const receipt = await response.getReceipt(client);
-      return response.transactionId.toString();
     }
+
+    const finalMessage = Buffer.from(JSON.stringify(hcsPayload), 'utf-8');
 
     const response = await new TopicMessageSubmitTransaction()
       .setTopicId(TopicId.fromString(topicId))
-      .setMessage(messageBytes)
+      .setMessage(finalMessage)
       .execute(client);
 
     await response.getReceipt(client);
     return response.transactionId.toString();
+  }
+
+  /**
+   * Build a compact payload for HCS that fits within 1024 bytes.
+   * Keeps the human-readable reasoning + core metadata.
+   * Strips the large `data` field (vault arrays, strategies, etc.).
+   */
+  private buildCompactPayload(
+    type: HCSMessageType,
+    decision: DecisionLog
+  ): {
+    type: HCSMessageType;
+    agent: string;
+    action: string;
+    reasoning: string;
+    confidence: number;
+    timestamp: string;
+    session: string;
+    summary: Record<string, unknown>;
+  } {
+    // Extract only small summary fields from data
+    const summary: Record<string, unknown> = {};
+    if (decision.data.dataSource) summary.source = decision.data.dataSource;
+    if (decision.data.vaultsScanned) summary.scanned = decision.data.vaultsScanned;
+    if (decision.data.vaultsMatched) summary.matched = decision.data.vaultsMatched;
+    if (decision.data.success !== undefined) summary.success = decision.data.success;
+    if (decision.data.transactionId) summary.txId = decision.data.transactionId;
+    if (decision.data.marketStatus) summary.market = decision.data.marketStatus;
+    if (decision.data.alert) {
+      const alert = decision.data.alert as { severity?: string; condition?: string };
+      summary.alertSeverity = alert.severity;
+      summary.alertCondition = alert.condition;
+    }
+
+    return {
+      type,
+      agent: decision.agentRole,
+      action: decision.action,
+      reasoning: decision.reasoning.substring(0, 300),
+      confidence: decision.confidence,
+      timestamp: decision.timestamp,
+      session: decision.sessionId,
+      summary,
+    };
   }
 
   /**
