@@ -48,14 +48,18 @@ export function Footer() {
   return (
     <footer className="border-t border-border-subtle py-8 px-6">
       <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <Image
-            src="/cropped.png"
+            src="/logo without text.png"
             alt="YieldMind"
-            width={120}
-            height={30}
-            className="h-6 w-auto opacity-60"
+            width={24}
+            height={24}
+            className="h-6 w-6 opacity-60"
           />
+          <span className="text-sm font-bold tracking-tight opacity-60">
+            <span className="text-[#F7F6F0]">Yield</span>
+            <span className="text-supply">Mind</span>
+          </span>
         </div>
         <div className="flex items-center gap-6">
           {[

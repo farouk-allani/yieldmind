@@ -27,9 +27,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       {isAssistant && (
         <div className="w-7 h-7 rounded-[8px] bg-[#F7F6F0] flex items-center justify-center flex-shrink-0 mr-2 mt-1 overflow-hidden">
           <img
-            src="/strategist.png"
+            src="/logo without text.png"
             alt="YieldMind"
-            className="w-4 h-4 object-contain"
+            className="w-5 h-5 object-contain"
           />
         </div>
       )}

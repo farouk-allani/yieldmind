@@ -150,14 +150,18 @@ export default function PortfolioPage() {
               <span className="text-sm">Back to Chat</span>
             </Link>
             <div className="w-px h-5 bg-border-subtle" />
-            <Link href="/" className="flex items-center">
+            <Link href="/" className="flex items-center gap-2">
               <Image
-                src="/cropped.png"
+                src="/logo without text.png"
                 alt="YieldMind"
-                width={130}
-                height={32}
-                className="h-7 w-auto"
+                width={28}
+                height={28}
+                className="h-7 w-7"
               />
+              <span className="text-sm font-bold tracking-tight">
+                <span className="text-[#F7F6F0]">Yield</span>
+                <span className="text-supply">Mind</span>
+              </span>
             </Link>
           </div>
           <ConnectWalletButton />
@@ -599,11 +603,11 @@ export default function PortfolioPage() {
             >
               <div className="flex items-center gap-3 mb-5">
                 <Image
-                  src="/cropped.png"
+                  src="/logo without text.png"
                   alt="YieldMind"
-                  width={100}
-                  height={25}
-                  className="h-5 w-auto opacity-70"
+                  width={20}
+                  height={20}
+                  className="h-5 w-5 opacity-70"
                 />
                 <div>
                   <h3 className="text-sm font-semibold text-text-primary">

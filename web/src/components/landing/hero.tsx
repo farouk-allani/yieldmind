@@ -41,14 +41,25 @@ export function Hero() {
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5, delay: 0.1 }}
         >
-          <Image
-            src="/cropped.png"
-            alt="YieldMind"
-            width={320}
-            height={80}
-            className="h-16 sm:h-20 w-auto"
-            priority
-          />
+          <div className="flex flex-col items-center gap-3">
+            <div className="flex items-center gap-4">
+              <Image
+                src="/logo without text.png"
+                alt="YieldMind"
+                width={80}
+                height={80}
+                className="h-16 sm:h-20 w-16 sm:w-20"
+                priority
+              />
+              <span className="text-3xl sm:text-4xl font-bold tracking-tight">
+                <span className="text-[#F7F6F0]">Yield</span>
+                <span className="text-supply">Mind</span>
+              </span>
+            </div>
+            <span className="text-[11px] sm:text-xs font-semibold tracking-[0.25em] uppercase text-text-muted">
+              Autonomous DeFi on Hedera
+            </span>
+          </div>
         </motion.div>
 
         {/* Hackathon badge */}
@@ -75,7 +86,7 @@ export function Hero() {
         </p>
 
         {/* Feature pills */}
-        <div className="flex flex-wrap items-center justify-center gap-3 mt-1">
+        {/* <div className="flex flex-wrap items-center justify-center gap-3 mt-1">
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface border border-border-subtle text-[12px] text-text-secondary">
             <Shield className="w-3 h-3 text-supply" />
             On-Chain Transparency
@@ -88,7 +99,7 @@ export function Hero() {
             <Eye className="w-3 h-3 text-accent" />
             24/7 Monitoring
           </div>
-        </div>
+        </div> */}
 
         {/* Buttons */}
         <div className="flex flex-col sm:flex-row items-center gap-3 mt-3">

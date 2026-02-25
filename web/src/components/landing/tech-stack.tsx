@@ -17,7 +17,6 @@ const techs: TechItem[] = [
   { name: 'HCS', icon: MessageSquareText, description: 'Consensus' },
   { name: 'HTS', icon: Coins, description: 'Token Service' },
   { name: 'LangChain', icon: Link2, description: 'AI Framework' },
-  { name: 'Next.js', icon: Triangle, description: 'Frontend' },
 ];
 
 export function TechStack() {

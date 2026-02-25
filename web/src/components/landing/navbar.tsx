@@ -25,13 +25,17 @@ export function Navbar() {
       <div className="max-w-6xl mx-auto h-full flex items-center justify-between px-6">
         <Link href="/" className="flex items-center gap-2">
           <Image
-            src="/cropped.png"
+            src="/logo without text.png"
             alt="YieldMind"
-            width={180}
-            height={45}
-            className="h-9 w-auto"
+            width={36}
+            height={36}
+            className="h-9 w-9"
             priority
           />
+          <span className="text-lg font-bold tracking-tight">
+            <span className="text-[#F7F6F0]">Yield</span>
+            <span className="text-supply">Mind</span>
+          </span>
         </Link>
 
         <div className="flex items-center gap-5">

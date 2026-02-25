@@ -30,15 +30,19 @@ export default function AppPage() {
       {/* Top nav */}
       <header className="flex-shrink-0 border-b border-border-subtle bg-page px-6 py-3">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
-          <Link href="/" className="flex items-center">
+          <Link href="/" className="flex items-center gap-2">
             <Image
-              src="/cropped.png"
+              src="/logo without text.png"
               alt="YieldMind"
-              width={160}
-              height={40}
-              className="h-8 w-auto"
+              width={32}
+              height={32}
+              className="h-8 w-8"
               priority
             />
+            <span className="text-base font-bold tracking-tight">
+              <span className="text-[#F7F6F0]">Yield</span>
+              <span className="text-supply">Mind</span>
+            </span>
           </Link>
 
           <div className="flex items-center gap-3">
