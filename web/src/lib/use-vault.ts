@@ -1,26 +1,37 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Contract, parseEther, formatEther, keccak256, toUtf8Bytes } from 'ethers';
+import { Contract, parseEther, formatUnits, keccak256, toUtf8Bytes } from 'ethers';
+
+// Hedera EVM stores msg.value in tinybars (8 decimals), not wei (18).
+// parseEther works for deposits (relay converts), but reads need 8 decimals.
+const HBAR_DECIMALS = 8;
 import { useWallet } from './wallet-context';
 import { VAULT_ABI, VAULT_ADDRESS } from './vault-abi';
 
-export type DepositStatus =
+export type TxStatus =
   | 'idle'
   | 'signing'
   | 'confirming'
   | 'confirmed'
   | 'failed';
 
-export interface DepositResult {
-  status: DepositStatus;
+/** @deprecated Use TxStatus instead */
+export type DepositStatus = TxStatus;
+
+export interface TxResult {
+  status: TxStatus;
   txHash: string | null;
   error: string | null;
 }
 
+/** @deprecated Use TxResult instead */
+export type DepositResult = TxResult;
+
 export function useVault() {
   const { provider, address, isConnected, isCorrectNetwork } = useWallet();
-  const [depositStatus, setDepositStatus] = useState<DepositStatus>('idle');
+  const [depositStatus, setDepositStatus] = useState<TxStatus>('idle');
+  const [withdrawStatus, setWithdrawStatus] = useState<TxStatus>('idle');
 
   const isReady = isConnected && isCorrectNetwork && !!VAULT_ADDRESS;
 
@@ -104,6 +115,116 @@ export function useVault() {
   );
 
   /**
+   * Withdraw HBAR from a specific strategy in the YieldMindVault contract.
+   * User signs the transaction in MetaMask.
+   */
+  const withdraw = useCallback(
+    async (
+      strategyId: string,
+      amountHbar: number
+    ): Promise<TxResult> => {
+      if (!provider || !address) {
+        return { status: 'failed', txHash: null, error: 'Wallet not connected' };
+      }
+
+      if (!VAULT_ADDRESS) {
+        return {
+          status: 'failed',
+          txHash: null,
+          error: 'Vault contract address not configured',
+        };
+      }
+
+      try {
+        setWithdrawStatus('signing');
+
+        const signer = await provider.getSigner();
+        const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, signer);
+
+        const strategyIdHash = keccak256(toUtf8Bytes(strategyId));
+
+        // Convert HBAR to tinybars (8 decimals) for the contract
+        const amountTinybars = BigInt(Math.round(amountHbar * 1e8));
+
+        const tx = await contract.withdraw(strategyIdHash, amountTinybars);
+
+        setWithdrawStatus('confirming');
+
+        const receipt = await tx.wait();
+
+        if (receipt && receipt.status === 1) {
+          setWithdrawStatus('confirmed');
+          return { status: 'confirmed', txHash: tx.hash, error: null };
+        } else {
+          setWithdrawStatus('failed');
+          return { status: 'failed', txHash: tx.hash, error: 'Transaction reverted' };
+        }
+      } catch (err: unknown) {
+        setWithdrawStatus('failed');
+        const error = err as { code?: string; message?: string };
+
+        if (error.code === 'ACTION_REJECTED') {
+          return { status: 'failed', txHash: null, error: 'Transaction rejected by user' };
+        }
+
+        return { status: 'failed', txHash: null, error: error.message || 'Unknown error' };
+      }
+    },
+    [provider, address]
+  );
+
+  /**
+   * Emergency withdraw ALL HBAR from the vault (all strategies).
+   * User signs the transaction in MetaMask.
+   */
+  const emergencyWithdraw = useCallback(
+    async (): Promise<TxResult> => {
+      if (!provider || !address) {
+        return { status: 'failed', txHash: null, error: 'Wallet not connected' };
+      }
+
+      if (!VAULT_ADDRESS) {
+        return {
+          status: 'failed',
+          txHash: null,
+          error: 'Vault contract address not configured',
+        };
+      }
+
+      try {
+        setWithdrawStatus('signing');
+
+        const signer = await provider.getSigner();
+        const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, signer);
+
+        const tx = await contract.emergencyWithdraw();
+
+        setWithdrawStatus('confirming');
+
+        const receipt = await tx.wait();
+
+        if (receipt && receipt.status === 1) {
+          setWithdrawStatus('confirmed');
+          return { status: 'confirmed', txHash: tx.hash, error: null };
+        } else {
+          setWithdrawStatus('failed');
+          return { status: 'failed', txHash: tx.hash, error: 'Transaction reverted' };
+        }
+      } catch (err: unknown) {
+        setWithdrawStatus('failed');
+        const error = err as { code?: string; message?: string };
+
+        if (error.code === 'ACTION_REJECTED') {
+          return { status: 'failed', txHash: null, error: 'Transaction rejected by user' };
+        }
+
+        return { status: 'failed', txHash: null, error: error.message || 'Unknown error' };
+      }
+    },
+    [provider, address]
+  );
+
+  /**
    * Read a user's deposit for a specific strategy
    */
   const getDeposit = useCallback(
@@ -114,7 +235,7 @@ export function useVault() {
         const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, provider);
         const strategyIdHash = keccak256(toUtf8Bytes(strategyId));
         const amount = await contract.getDeposit(strategyIdHash, address);
-        return formatEther(amount);
+        return formatUnits(amount, HBAR_DECIMALS);
       } catch {
         return '0';
       }
@@ -131,7 +252,7 @@ export function useVault() {
     try {
       const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, provider);
       const total = await contract.userTotals(address);
-      return formatEther(total);
+      return formatUnits(total, HBAR_DECIMALS);
     } catch {
       return '0';
     }
@@ -146,7 +267,7 @@ export function useVault() {
     try {
       const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, provider);
       const tvl = await contract.totalValueLocked();
-      return formatEther(tvl);
+      return formatUnits(tvl, HBAR_DECIMALS);
     } catch {
       return '0';
     }
@@ -154,14 +275,18 @@ export function useVault() {
 
   const resetStatus = useCallback(() => {
     setDepositStatus('idle');
+    setWithdrawStatus('idle');
   }, []);
 
   return {
     deposit,
+    withdraw,
+    emergencyWithdraw,
     getDeposit,
     getUserTotal,
     getTVL,
     depositStatus,
+    withdrawStatus,
     resetStatus,
     isReady,
   };

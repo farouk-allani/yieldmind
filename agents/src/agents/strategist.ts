@@ -139,16 +139,19 @@ export class StrategistAgent extends BaseAgent {
 
   /**
    * Calculate vault allocations based on risk tolerance.
+   * Returns empty array if no vaults available (caller handles this).
    */
   private calculateAllocations(
     risk: RiskTolerance,
     vaults: (VaultInfo & { score: number })[]
   ): { vault: VaultInfo & { score: number }; allocation: number }[] {
+    if (vaults.length === 0) return [];
+
     switch (risk) {
       case 'conservative': {
-        // Single best conservative vault or split 70/30 with top 2
         const safe = vaults.filter((v) => v.riskLevel === 'conservative');
         const picks = safe.length > 0 ? safe.slice(0, 2) : vaults.slice(0, 1);
+        if (picks.length === 0) return [{ vault: vaults[0], allocation: 100 }];
         if (picks.length === 1) return [{ vault: picks[0], allocation: 100 }];
         return [
           { vault: picks[0], allocation: 70 },
@@ -157,8 +160,8 @@ export class StrategistAgent extends BaseAgent {
       }
 
       case 'moderate': {
-        // Spread across 2-3 vaults
         const picks = vaults.slice(0, 3);
+        if (picks.length === 0) return [];
         if (picks.length === 1) return [{ vault: picks[0], allocation: 100 }];
         if (picks.length === 2) {
           return [
@@ -174,8 +177,8 @@ export class StrategistAgent extends BaseAgent {
       }
 
       case 'aggressive': {
-        // Weight toward highest APY vaults
         const picks = vaults.slice(0, 3);
+        if (picks.length === 0) return [];
         const sorted = [...picks].sort((a, b) => b.apy - a.apy);
         if (sorted.length === 1) return [{ vault: sorted[0], allocation: 100 }];
         if (sorted.length === 2) {

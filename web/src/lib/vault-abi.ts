@@ -15,5 +15,8 @@ export const VAULT_ABI = [
   'event EmergencyWithdrawn(address indexed user, uint256 amount)',
 ];
 
+// Deployed address with env override. Hardcoded fallback ensures
+// reads work even if the dev server wasn't restarted after adding the env var.
 export const VAULT_ADDRESS =
-  process.env.NEXT_PUBLIC_VAULT_CONTRACT_ADDRESS || '';
+  process.env.NEXT_PUBLIC_VAULT_CONTRACT_ADDRESS ||
+  '0x29d115707bEe4adAa159Fe757B7dA4ffF8cc432A';

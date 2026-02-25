@@ -42,11 +42,12 @@ if (process.env.NODE_ENV !== 'production' && agentRuntime) {
 
 /**
  * Parse user intent — tries LLM first, falls back to keywords.
+ * Returns null if the message is not a yield intent.
  */
 export async function parseIntent(
   message: string,
   sessionId: string
-): Promise<UserIntent> {
+): Promise<UserIntent | null> {
   if (agentRuntime?.llmClient) {
     return parseUserIntentWithLLM(message, sessionId, agentRuntime.llmClient);
   }

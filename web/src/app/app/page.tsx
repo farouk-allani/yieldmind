@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Activity, Radio, Database } from 'lucide-react';
+import { Activity, Radio, Database, BarChart3 } from 'lucide-react';
+import Link from 'next/link';
 import { ChatInterface } from '@/components/chat/chat-interface';
 import { AgentStatusPanel } from '@/components/dashboard/agent-status';
 import { DecisionLogPanel } from '@/components/dashboard/decision-log';
@@ -43,19 +44,22 @@ export default function AppPage() {
           </div>
 
           <div className="flex items-center gap-3">
+            <Link
+              href="/app/portfolio"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] bg-surface border border-border-subtle text-[11px] text-text-secondary font-medium hover:bg-surface-hover transition-colors"
+            >
+              <BarChart3 className="w-3 h-3" />
+              Portfolio
+            </Link>
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[8px] bg-supply/10 text-[11px] text-supply font-medium">
               <Database className="w-3 h-3" />
-              Live Mainnet Data
+              Live Data
             </div>
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-supply" />
               <span className="text-[11px] text-text-secondary">
                 Hedera Testnet
               </span>
-            </div>
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[8px] bg-surface text-[11px] text-text-muted">
-              <Radio className="w-3 h-3" />
-              Bonzo Vaults
             </div>
             <ConnectWalletButton />
           </div>
@@ -88,8 +92,6 @@ export default function AppPage() {
 
         {/* Dashboard sidebar */}
         <aside className="w-80 flex-shrink-0 overflow-y-auto bg-page p-4 space-y-6 hidden lg:block">
-          <PositionPanel activeStrategy={activeStrategy} />
-          <div className="border-t border-border-subtle" />
           <AgentStatusPanel agents={agents} />
           <div className="border-t border-border-subtle" />
           <DecisionLogPanel decisions={decisions} />

@@ -69,8 +69,11 @@ export function createRuntime() {
 // System prompt for LLM-powered intent parsing
 const INTENT_PARSER_PROMPT = `You are YieldMind's intent parser. Extract structured yield intent from the user's message.
 
+First determine if the message is a DeFi yield intent (wanting to deposit, invest, earn yield, etc.) or a general question (asking about features, status, help, listing info, etc.).
+
 Respond with ONLY valid JSON (no markdown, no explanation):
 {
+  "isYieldIntent": true | false,
   "riskTolerance": "conservative" | "moderate" | "aggressive",
   "targetAmount": <number>,
   "tokenSymbol": "HBAR" | "USDC" | "USDT",
@@ -78,6 +81,7 @@ Respond with ONLY valid JSON (no markdown, no explanation):
 }
 
 Rules:
+- If the user is asking a question, listing info, asking for help, or not expressing a desire to invest/deposit/earn yield -> isYieldIntent: false
 - "safe", "low risk", "stable", "conservative" -> conservative
 - "balanced", "moderate", "medium" -> moderate
 - "aggressive", "max", "high yield", "risky", "yolo" -> aggressive
@@ -85,13 +89,55 @@ Rules:
 - Extract the numeric amount and token from the message`;
 
 /**
+ * Check if a message looks like a yield/DeFi intent using keyword heuristics.
+ * Returns false for general questions, help requests, etc.
+ */
+export function isLikelyYieldIntent(message: string): boolean {
+  const lower = message.toLowerCase();
+
+  // Positive signals — user wants to deposit/invest/earn
+  const yieldKeywords = [
+    'yield', 'deposit', 'invest', 'earn', 'apy', 'stake',
+    'supply', 'lend', 'put', 'allocate', 'want',
+    'hbar', 'usdc', 'usdt', 'safe', 'aggressive', 'conservative',
+    'moderate', 'low risk', 'high yield', 'diversi',
+  ];
+
+  // Negative signals — user is asking questions or browsing
+  const questionKeywords = [
+    'list', 'show', 'what is', 'what are', 'how do', 'how does',
+    'explain', 'help', 'tell me about', 'describe', 'status',
+    'history', 'who', 'where', 'when', 'why', 'can you',
+    'what can', 'features', 'options', 'available',
+  ];
+
+  const hasYieldKeyword = yieldKeywords.some((kw) => lower.includes(kw));
+  const hasQuestionKeyword = questionKeywords.some((kw) => lower.includes(kw));
+
+  // Must have at least one yield keyword and NOT be purely a question
+  // Exception: if it has both (e.g., "I want safe yield"), yield wins
+  if (hasYieldKeyword && !hasQuestionKeyword) return true;
+  if (hasYieldKeyword && hasQuestionKeyword) {
+    // If it contains amount + yield keyword, it's likely a yield intent
+    const hasAmount = /\d+/.test(lower);
+    if (hasAmount) return true;
+    // "I want" + yield keyword = yield intent
+    if (lower.includes('want') || lower.includes('earn') || lower.includes('deposit')) return true;
+    return false;
+  }
+
+  return false;
+}
+
+/**
  * Parse user intent using LLM (OpenRouter) with keyword fallback.
+ * Returns null if the message is not a yield intent (general question).
  */
 export async function parseUserIntentWithLLM(
   message: string,
   sessionId: string,
   llmClient: LLMClient | null
-): Promise<UserIntent> {
+): Promise<UserIntent | null> {
   if (llmClient) {
     try {
       const response = await llmClient.chat([
@@ -107,11 +153,18 @@ export async function parseUserIntentWithLLM(
       }
 
       const parsed = JSON.parse(content) as {
+        isYieldIntent?: boolean;
         riskTolerance?: string;
         targetAmount?: number;
         tokenSymbol?: string;
         preferences?: string[];
       };
+
+      // If LLM says it's not a yield intent, return null
+      if (parsed.isYieldIntent === false) {
+        console.log('[Intent] LLM classified as non-yield query');
+        return null;
+      }
 
       const validRisks = ['conservative', 'moderate', 'aggressive'];
       const riskTolerance = validRisks.includes(parsed.riskTolerance || '')
@@ -143,11 +196,18 @@ export async function parseUserIntentWithLLM(
 
 /**
  * Keyword-based intent parser (reliable fallback).
+ * Returns null if the message doesn't look like a yield intent.
  */
 export function parseUserIntent(
   message: string,
   sessionId: string
-): UserIntent {
+): UserIntent | null {
+  // First check if this is actually a yield intent
+  if (!isLikelyYieldIntent(message)) {
+    console.log('[Intent] Keyword parser: not a yield intent');
+    return null;
+  }
+
   const lower = message.toLowerCase();
 
   let riskTolerance: UserIntent['riskTolerance'] = 'moderate';

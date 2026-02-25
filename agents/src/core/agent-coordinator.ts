@@ -43,7 +43,7 @@ export class AgentCoordinator {
   private strategist: StrategistAgent;
   private executor: ExecutorAgent;
   private sentinel: SentinelAgent;
-  private sessionTopicId: string | null = null;
+  private sessions: Map<string, string> = new Map(); // sessionId -> topicId
   private decisions: DecisionLog[] = [];
   private lastStrategy: Strategy | null = null;
 
@@ -57,22 +57,32 @@ export class AgentCoordinator {
   }
 
   /**
-   * Initialize a new session — creates HCS topic and configures agents
+   * Initialize a new session — creates HCS topic and configures agents.
+   * Reuses existing topic if session was already initialized.
    */
   async initSession(sessionId: string): Promise<string> {
-    const topicId = await this.hcsService.createSessionTopic(sessionId);
-    this.sessionTopicId = topicId;
+    // Reuse existing session topic
+    const existing = this.sessions.get(sessionId);
+    if (existing) {
+      this.setAgentTopics(existing);
+      return existing;
+    }
 
-    // Point all agents to the session topic
-    this.scout.setTopic(topicId);
-    this.strategist.setTopic(topicId);
-    this.executor.setTopic(topicId);
-    this.sentinel.setTopic(topicId);
+    const topicId = await this.hcsService.createSessionTopic(sessionId);
+    this.sessions.set(sessionId, topicId);
+    this.setAgentTopics(topicId);
 
     console.log(
       `[Coordinator] Session ${sessionId} initialized with HCS topic: ${topicId}`
     );
     return topicId;
+  }
+
+  private setAgentTopics(topicId: string) {
+    this.scout.setTopic(topicId);
+    this.strategist.setTopic(topicId);
+    this.executor.setTopic(topicId);
+    this.sentinel.setTopic(topicId);
   }
 
   /**
@@ -82,7 +92,7 @@ export class AgentCoordinator {
    * Phase 2: Executor (requires explicit user approval)
    */
   async processIntent(intent: UserIntent): Promise<ChatResponse> {
-    if (!this.sessionTopicId) {
+    if (!this.sessions.has(intent.sessionId)) {
       await this.initSession(intent.sessionId);
     }
 
@@ -152,7 +162,7 @@ export class AgentCoordinator {
   async confirmExecution(
     confirmation: ExecutionConfirmation
   ): Promise<ChatResponse> {
-    if (!this.sessionTopicId) {
+    if (!this.sessions.has(confirmation.sessionId)) {
       await this.initSession(confirmation.sessionId);
     }
 
