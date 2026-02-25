@@ -54,9 +54,19 @@ export interface VaultStrategy {
   reasoning: string;
 }
 
+export interface UserIntent {
+  rawMessage: string;
+  riskTolerance: RiskTolerance;
+  targetAmount: number;
+  tokenSymbol: string;
+  preferences: string[];
+  sessionId: string;
+}
+
 export interface Strategy {
   id: string;
   sessionId: string;
+  userIntent: UserIntent;
   vaults: VaultStrategy[];
   totalExpectedApy: number;
   overallRisk: RiskTolerance;

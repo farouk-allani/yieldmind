@@ -85,11 +85,20 @@ export type HCSMessageType =
   | 'strategist:strategy-proposed'
   | 'strategist:strategy-approved'
   | 'executor:deposit'
+  | 'executor:deposit-confirmed'
   | 'executor:harvest'
   | 'executor:withdraw'
   | 'executor:rebalance'
   | 'sentinel:alert'
   | 'sentinel:emergency-exit';
+
+export interface ExecutionConfirmation {
+  txHash: string;
+  userAddress: string;
+  depositAmount: number;
+  sessionId: string;
+  strategyId?: string;
+}
 
 export interface HCSMessage {
   type: HCSMessageType;

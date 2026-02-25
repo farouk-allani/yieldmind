@@ -1,7 +1,7 @@
 import { BaseAgent } from '../core/base-agent.js';
 import type { HCSService } from '../hedera/hcs.js';
 import type { HederaClient } from '../hedera/client.js';
-import type { DecisionLog, Strategy } from '../types/index.js';
+import type { DecisionLog, Strategy, ExecutionConfirmation } from '../types/index.js';
 
 interface ExecutorInput {
   strategy: Strategy;
@@ -130,6 +130,43 @@ export class ExecutorAgent extends BaseAgent {
       error: result.error,
       depositAmount,
     };
+  }
+
+  /**
+   * Confirm a user-signed deposit that was already executed via MetaMask.
+   * Verifies the tx via Mirror Node, then publishes to HCS.
+   */
+  async confirmDeposit(
+    confirmation: ExecutionConfirmation,
+    verified: boolean
+  ): Promise<DecisionLog> {
+    this.setStatus('executing', 'Confirming user deposit...');
+
+    const reasoning = verified
+      ? `User deposit confirmed on-chain. Transaction ${confirmation.txHash} from ${confirmation.userAddress} ` +
+        `for ${confirmation.depositAmount} HBAR deposited into YieldMindVault contract. ` +
+        `Verified via Mirror Node. Sentinel monitoring activated.`
+      : `User submitted deposit transaction ${confirmation.txHash} but on-chain verification ` +
+        `is still pending. The transaction may need more time to propagate to the mirror node.`;
+
+    const decision = this.createDecision(
+      'deposit-confirmed',
+      reasoning,
+      verified ? 0.98 : 0.6,
+      confirmation.sessionId,
+      {
+        success: verified,
+        txHash: confirmation.txHash,
+        userAddress: confirmation.userAddress,
+        depositAmount: confirmation.depositAmount,
+        hashscanUrl: `https://hashscan.io/testnet/transaction/${confirmation.txHash}`,
+      }
+    );
+
+    await this.publishDecision('executor:deposit-confirmed', decision);
+    this.setStatus('idle', verified ? 'Deposit confirmed' : 'Awaiting confirmation');
+
+    return decision;
   }
 
   private buildReasoning(

@@ -5,7 +5,8 @@
   "description": "YieldMind Protocol — Autonomous DeFi Coordination Layer for Hedera",
   "workspaces": [
     "agents",
-    "web"
+    "web",
+    "contracts"
   ],
   "scripts": {
     "dev:agents": "cd agents && npm run dev",

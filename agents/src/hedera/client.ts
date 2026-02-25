@@ -6,7 +6,7 @@ import {
   TransferTransaction,
   AccountBalanceQuery,
 } from '@hashgraph/sdk';
-import type { TransactionResult } from '../types';
+import type { TransactionResult } from '../types/index.js';
 
 export class HederaClient {
   private client: Client;
@@ -83,6 +83,64 @@ export class HederaClient {
       .execute(this.client)
       .catch(() => null);
     return balance ? balance.hbars.toBigNumber().toNumber() : 0;
+  }
+
+  /**
+   * Verify an EVM transaction via Mirror Node.
+   * Used to confirm user-signed deposits from MetaMask.
+   */
+  async verifyEvmTransaction(
+    txHash: string
+  ): Promise<{
+    verified: boolean;
+    from: string | null;
+    to: string | null;
+    amount: string | null;
+    error: string | null;
+  }> {
+    const mirrorUrl =
+      process.env.HEDERA_MIRROR_NODE_URL ||
+      'https://testnet.mirrornode.hedera.com';
+
+    try {
+      const response = await fetch(
+        `${mirrorUrl}/api/v1/contracts/results/${txHash}`
+      );
+
+      if (!response.ok) {
+        return {
+          verified: false,
+          from: null,
+          to: null,
+          amount: null,
+          error: `Mirror Node returned ${response.status}`,
+        };
+      }
+
+      const data = (await response.json()) as {
+        result: string;
+        from: string;
+        to: string;
+        amount: number;
+        status: string;
+      };
+
+      return {
+        verified: data.result === 'SUCCESS' || data.status === '0x1',
+        from: data.from || null,
+        to: data.to || null,
+        amount: data.amount?.toString() || null,
+        error: null,
+      };
+    } catch (error) {
+      return {
+        verified: false,
+        from: null,
+        to: null,
+        amount: null,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
   }
 
   close(): void {

@@ -170,6 +170,14 @@ export function createMockChatResponse(
   const strategy: Strategy = {
     id: `strategy-${Date.now()}`,
     sessionId,
+    userIntent: {
+      rawMessage: message,
+      riskTolerance: risk,
+      targetAmount: 100,
+      tokenSymbol: 'HBAR',
+      preferences: [],
+      sessionId,
+    },
     vaults: strategyVaults,
     totalExpectedApy: totalApy,
     overallRisk: risk,

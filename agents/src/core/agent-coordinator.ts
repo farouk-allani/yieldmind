@@ -5,15 +5,18 @@ import type {
   DecisionLog,
   AgentState,
   ChatResponse,
-} from '../types';
-import type { HCSService } from '../hedera/hcs';
-import type { ScoutAgent } from '../agents/scout';
-import type { StrategistAgent } from '../agents/strategist';
-import type { ExecutorAgent } from '../agents/executor';
-import type { SentinelAgent } from '../agents/sentinel';
+  ExecutionConfirmation,
+} from '../types/index.js';
+import type { HCSService } from '../hedera/hcs.js';
+import type { HederaClient } from '../hedera/client.js';
+import type { ScoutAgent } from '../agents/scout.js';
+import type { StrategistAgent } from '../agents/strategist.js';
+import type { ExecutorAgent } from '../agents/executor.js';
+import type { SentinelAgent } from '../agents/sentinel.js';
 
 interface CoordinatorDeps {
   hcsService: HCSService;
+  hederaClient: HederaClient;
   scout: ScoutAgent;
   strategist: StrategistAgent;
   executor: ExecutorAgent;
@@ -35,6 +38,7 @@ interface CoordinatorDeps {
  */
 export class AgentCoordinator {
   private hcsService: HCSService;
+  private hederaClient: HederaClient;
   private scout: ScoutAgent;
   private strategist: StrategistAgent;
   private executor: ExecutorAgent;
@@ -45,6 +49,7 @@ export class AgentCoordinator {
 
   constructor(deps: CoordinatorDeps) {
     this.hcsService = deps.hcsService;
+    this.hederaClient = deps.hederaClient;
     this.scout = deps.scout;
     this.strategist = deps.strategist;
     this.executor = deps.executor;
@@ -125,7 +130,7 @@ export class AgentCoordinator {
     this.sentinel.execute({
       strategy,
       sessionId,
-    }).then((sentinelDecision) => {
+    }).then((sentinelDecision: DecisionLog) => {
       this.decisions.push(sentinelDecision);
     });
 
@@ -136,6 +141,73 @@ export class AgentCoordinator {
         ...strategy,
         status: executorDecision.data.success ? 'active' : 'proposed',
       },
+      decisions: this.decisions.slice(-5),
+    };
+  }
+
+  /**
+   * Confirm a user-signed deposit from MetaMask.
+   * Verifies the transaction, publishes to HCS, starts sentinel monitoring.
+   */
+  async confirmExecution(
+    confirmation: ExecutionConfirmation
+  ): Promise<ChatResponse> {
+    if (!this.sessionTopicId) {
+      await this.initSession(confirmation.sessionId);
+    }
+
+    // Step 1: Verify the transaction via Mirror Node
+    const verification = await this.hederaClient.verifyEvmTransaction(
+      confirmation.txHash
+    );
+
+    // Step 2: Executor confirms and publishes to HCS
+    const executorDecision = await this.executor.confirmDeposit(
+      confirmation,
+      verification.verified
+    );
+    this.decisions.push(executorDecision);
+
+    // Step 3: Start sentinel monitoring if we have a strategy
+    const strategy = this.lastStrategy;
+    if (strategy && verification.verified) {
+      this.sentinel
+        .execute({ strategy, sessionId: confirmation.sessionId })
+        .then((sentinelDecision) => {
+          this.decisions.push(sentinelDecision);
+        });
+    }
+
+    const hashscanUrl = `https://hashscan.io/testnet/transaction/${confirmation.txHash}`;
+
+    const message = verification.verified
+      ? [
+          'Deposit confirmed on-chain!',
+          '',
+          `**Amount:** ${confirmation.depositAmount} HBAR`,
+          `**From:** ${confirmation.userAddress}`,
+          `**To:** YieldMindVault contract`,
+          `**Transaction:** ${hashscanUrl}`,
+          '',
+          `**Agent reasoning:** ${executorDecision.reasoning}`,
+          '',
+          'The Sentinel agent is now monitoring your position for market changes.',
+        ].join('\n')
+      : [
+          'Deposit transaction submitted. Verification pending.',
+          '',
+          `**Transaction:** ${hashscanUrl}`,
+          '',
+          'Mirror Node may take a few seconds to index the transaction. ' +
+            'Your deposit has been recorded and the Sentinel agent will begin monitoring once confirmed.',
+        ].join('\n');
+
+    return {
+      message,
+      agentStates: this.getAgentStates(),
+      strategy: strategy
+        ? { ...strategy, status: verification.verified ? 'active' : 'executing' }
+        : undefined,
       decisions: this.decisions.slice(-5),
     };
   }
@@ -176,7 +248,7 @@ export class AgentCoordinator {
 
     const vaultSummaries = strategy.vaults
       .map(
-        (v) =>
+        (v: { vaultName: string; allocation: number; expectedApy: number; riskLevel: string }) =>
           `• ${v.vaultName}: ${v.allocation}% allocation, ~${v.expectedApy.toFixed(1)}% APY (${v.riskLevel} risk)`
       )
       .join('\n');

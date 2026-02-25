@@ -1,0 +1,9 @@
+{
+  "contract": "YieldMindVault",
+  "address": "0x29d115707bEe4adAa159Fe757B7dA4ffF8cc432A",
+  "deployer": "0x3D560b576856B60BBAE69a22601264B8d91a80A9",
+  "network": "hederaTestnet",
+  "chainId": 296,
+  "timestamp": "2026-02-25T08:37:49.913Z",
+  "txHash": "0x5ac219c9419b22ca101f6bc9968ea64c3e7be7a648f42b06332ce916e6e83d11"
+}

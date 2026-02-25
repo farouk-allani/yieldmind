@@ -45,6 +45,7 @@ export function createRuntime() {
   // Wire up the coordinator
   const coordinator = new AgentCoordinator({
     hcsService,
+    hederaClient,
     scout,
     strategist,
     executor,

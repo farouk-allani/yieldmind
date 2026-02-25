@@ -5,12 +5,15 @@ import { Activity, Radio, Database } from 'lucide-react';
 import { ChatInterface } from '@/components/chat/chat-interface';
 import { AgentStatusPanel } from '@/components/dashboard/agent-status';
 import { DecisionLogPanel } from '@/components/dashboard/decision-log';
+import { PositionPanel } from '@/components/dashboard/position-panel';
+import { ConnectWalletButton } from '@/components/wallet/connect-button';
 import { fetchAgentStatus } from '@/lib/api';
-import type { AgentState, DecisionLog } from '@/lib/types';
+import type { AgentState, DecisionLog, Strategy } from '@/lib/types';
 
 export default function AppPage() {
   const [agents, setAgents] = useState<AgentState[]>([]);
   const [decisions, setDecisions] = useState<DecisionLog[]>([]);
+  const [activeStrategy, setActiveStrategy] = useState<Strategy | null>(null);
 
   useEffect(() => {
     fetchAgentStatus()
@@ -39,7 +42,7 @@ export default function AppPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[8px] bg-supply/10 text-[11px] text-supply font-medium">
               <Database className="w-3 h-3" />
               Live Mainnet Data
@@ -54,6 +57,7 @@ export default function AppPage() {
               <Radio className="w-3 h-3" />
               Bonzo Vaults
             </div>
+            <ConnectWalletButton />
           </div>
         </div>
       </header>
@@ -76,11 +80,16 @@ export default function AppPage() {
                 return [...prev, ...newDecs];
               })
             }
+            onStrategyUpdate={(strategy) =>
+              strategy && setActiveStrategy(strategy)
+            }
           />
         </div>
 
         {/* Dashboard sidebar */}
         <aside className="w-80 flex-shrink-0 overflow-y-auto bg-page p-4 space-y-6 hidden lg:block">
+          <PositionPanel activeStrategy={activeStrategy} />
+          <div className="border-t border-border-subtle" />
           <AgentStatusPanel agents={agents} />
           <div className="border-t border-border-subtle" />
           <DecisionLogPanel decisions={decisions} />
