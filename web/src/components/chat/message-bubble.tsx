@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import type { ChatMessage } from '@/lib/types';
 
@@ -8,8 +9,12 @@ interface MessageBubbleProps {
 }
 
 export function MessageBubble({ message }: MessageBubbleProps) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
+  const isAssistant = message.role === 'assistant';
 
   return (
     <motion.div
@@ -18,6 +23,17 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       transition={{ duration: 0.2 }}
       className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}
     >
+      {/* Agent avatar for assistant messages */}
+      {isAssistant && (
+        <div className="w-7 h-7 rounded-[8px] bg-[#F7F6F0] flex items-center justify-center flex-shrink-0 mr-2 mt-1 overflow-hidden">
+          <img
+            src="/strategist.png"
+            alt="YieldMind"
+            className="w-4 h-4 object-contain"
+          />
+        </div>
+      )}
+
       <div
         className={`max-w-[80%] rounded-[8px] px-4 py-3 ${
           isUser
@@ -34,7 +50,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               ? 'text-text-muted'
               : isSystem
                 ? 'text-borrow'
-                : 'text-accent'
+                : 'text-supply'
           }`}
         >
           {isUser ? 'You' : isSystem ? 'System' : 'YieldMind'}
@@ -55,7 +71,6 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 }
 
 function renderContent(text: string) {
-  // Split on bold markers AND URLs
   const parts = text.split(/(\*\*.*?\*\*|https?:\/\/[^\s]+)/g);
   return parts.map((part, i) => {
     if (part.startsWith('**') && part.endsWith('**')) {
@@ -73,7 +88,7 @@ function renderContent(text: string) {
           href={part}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-accent hover:text-accent/80 underline underline-offset-2 transition-colors"
+          className="text-supply hover:text-supply/80 underline underline-offset-2 transition-colors"
         >
           {isHashScan ? 'View on HashScan' : part}
         </a>

@@ -20,15 +20,7 @@ export function ChatInterface({
   onDecisionsUpdate,
   onStrategyUpdate,
 }: ChatInterfaceProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'welcome',
-      role: 'system',
-      content:
-        'Welcome to YieldMind. Connect your wallet, then tell me your yield intent and I\'ll coordinate the agent network to find the optimal strategy on Bonzo Vaults.\n\nTry: "I want safe yield on 100 HBAR"',
-      timestamp: new Date().toISOString(),
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const sessionRef = useRef(`session-${Date.now()}`);
@@ -43,6 +35,13 @@ export function ChatInterface({
 
   useEffect(() => {
     setMounted(true);
+    setMessages([{
+      id: 'welcome',
+      role: 'system',
+      content:
+        'Welcome to YieldMind. Connect your wallet, then tell me your yield intent and I\'ll coordinate the agent network to find the optimal strategy on Bonzo Vaults.\n\nTry: "I want safe yield on 100 HBAR"',
+      timestamp: new Date().toISOString(),
+    }]);
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -213,14 +212,22 @@ export function ChatInterface({
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex-shrink-0 border-b border-border-subtle px-5 py-3">
-        <div className="flex items-center gap-2">
-          <MessageSquare className="w-4 h-4 text-text-muted" />
-          <h2 className="text-sm font-medium text-text-secondary">
-            Agent Chat
-          </h2>
-          <span className="text-[11px] text-text-muted ml-auto">
-            {mounted ? sessionId : ''}
-          </span>
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-[8px] bg-[#F7F6F0] flex items-center justify-center overflow-hidden">
+            <img src="/strategist.png" alt="AI" className="w-4 h-4 object-contain" />
+          </div>
+          <div className="flex-1">
+            <h2 className="text-sm font-medium text-text-primary">
+              Agent Chat
+            </h2>
+            <p className="text-[10px] text-text-muted">
+              {mounted ? sessionId : ''}
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-supply" />
+            <span className="text-[10px] text-text-muted">Connected</span>
+          </div>
         </div>
       </div>
 

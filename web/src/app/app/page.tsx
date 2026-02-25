@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Activity, Radio, Database, BarChart3 } from 'lucide-react';
+import { Database, BarChart3 } from 'lucide-react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { ChatInterface } from '@/components/chat/chat-interface';
 import { AgentStatusPanel } from '@/components/dashboard/agent-status';
 import { DecisionLogPanel } from '@/components/dashboard/decision-log';
@@ -29,19 +30,16 @@ export default function AppPage() {
       {/* Top nav */}
       <header className="flex-shrink-0 border-b border-border-subtle bg-page px-6 py-3">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-[8px] bg-accent/10 flex items-center justify-center">
-              <Activity className="w-4 h-4 text-accent" />
-            </div>
-            <div>
-              <h1 className="font-display text-base font-bold text-text-primary">
-                YieldMind
-              </h1>
-              <p className="text-[11px] text-text-muted -mt-0.5">
-                Autonomous DeFi Intelligence
-              </p>
-            </div>
-          </div>
+          <Link href="/" className="flex items-center">
+            <Image
+              src="/cropped.png"
+              alt="YieldMind"
+              width={160}
+              height={40}
+              className="h-8 w-auto"
+              priority
+            />
+          </Link>
 
           <div className="flex items-center gap-3">
             <Link

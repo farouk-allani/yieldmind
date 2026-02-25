@@ -2,6 +2,8 @@
 
 import { motion } from 'framer-motion';
 import Link from 'next/link';
+import Image from 'next/image';
+import { ArrowRight } from 'lucide-react';
 
 export function CTA() {
   return (
@@ -14,16 +16,17 @@ export function CTA() {
         className="max-w-2xl mx-auto text-center flex flex-col items-center gap-5"
       >
         <h2 className="font-display text-3xl sm:text-4xl font-bold text-text-primary leading-tight">
-          Start earning smarter yield on Hedera.
+          Start earning <span className="text-supply">smarter yield</span> on Hedera.
         </h2>
         <p className="text-base text-text-secondary">
           No DeFi expertise required. Just tell YieldMind what you want.
         </p>
         <Link
           href="/app"
-          className="h-11 px-6 rounded-[8px] bg-accent text-sm font-medium text-white flex items-center gap-2 hover:bg-accent/90 transition-colors mt-2"
+          className="h-12 px-7 rounded-[8px] bg-supply text-sm font-semibold text-white flex items-center gap-2 hover:bg-supply/90 transition-all shadow-lg shadow-supply/20 mt-2"
         >
-          Launch App <span aria-hidden>→</span>
+          Launch App
+          <ArrowRight className="w-4 h-4" />
         </Link>
         <p className="text-[13px] text-text-muted mt-2">
           Open source · MIT License ·{' '}
@@ -33,7 +36,7 @@ export function CTA() {
             rel="noopener noreferrer"
             className="text-text-secondary hover:text-text-primary transition-colors"
           >
-            GitHub ↗
+            GitHub
           </a>
         </p>
       </motion.div>
@@ -43,12 +46,18 @@ export function CTA() {
 
 export function Footer() {
   return (
-    <footer className="border-t border-border-subtle py-6 px-6">
-      <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
-        <span className="text-[13px] text-text-muted">
-          YieldMind Protocol © 2026
-        </span>
-        <div className="flex items-center gap-5">
+    <footer className="border-t border-border-subtle py-8 px-6">
+      <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Image
+            src="/cropped.png"
+            alt="YieldMind"
+            width={120}
+            height={30}
+            className="h-6 w-auto opacity-60"
+          />
+        </div>
+        <div className="flex items-center gap-6">
           {[
             { label: 'GitHub', href: 'https://github.com' },
             { label: 'Docs', href: '#' },
@@ -66,6 +75,9 @@ export function Footer() {
             </a>
           ))}
         </div>
+        <span className="text-[12px] text-text-muted">
+          © 2026 YieldMind Protocol
+        </span>
       </div>
     </footer>
   );

@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Activity } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import Link from 'next/link';
+import Image from 'next/image';
 
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
@@ -17,21 +18,35 @@ export function Navbar() {
     <nav
       className={`fixed top-0 left-0 right-0 z-50 h-16 transition-all duration-300 ${
         scrolled
-          ? 'bg-page/80 backdrop-blur-sm border-b border-border-subtle'
+          ? 'bg-page/90 backdrop-blur-md border-b border-border-subtle'
           : 'bg-transparent'
       }`}
     >
       <div className="max-w-6xl mx-auto h-full flex items-center justify-between px-6">
-        <Link href="/" className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-[8px] bg-accent/10 flex items-center justify-center">
-            <Activity className="w-4 h-4 text-accent" />
-          </div>
-          <span className="font-display text-base font-bold text-text-primary">
-            YieldMind
-          </span>
+        <Link href="/" className="flex items-center gap-2">
+          <Image
+            src="/cropped.png"
+            alt="YieldMind"
+            width={180}
+            height={45}
+            className="h-9 w-auto"
+            priority
+          />
         </Link>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-5">
+          <Link
+            href="#how-it-works"
+            className="text-sm text-text-secondary hover:text-text-primary transition-colors hidden md:block"
+          >
+            How It Works
+          </Link>
+          <Link
+            href="#agents"
+            className="text-sm text-text-secondary hover:text-text-primary transition-colors hidden md:block"
+          >
+            Agents
+          </Link>
           <a
             href="https://github.com"
             target="_blank"
@@ -42,9 +57,10 @@ export function Navbar() {
           </a>
           <Link
             href="/app"
-            className="h-9 px-4 rounded-[8px] bg-accent text-sm font-medium text-white flex items-center hover:bg-accent/90 transition-colors"
+            className="h-9 px-5 rounded-[8px] bg-supply text-sm font-semibold text-white flex items-center gap-2 hover:bg-supply/90 transition-all"
           >
             Launch App
+            <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
       </div>

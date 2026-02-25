@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Activity,
   ArrowLeft,
   RefreshCw,
   ExternalLink,
@@ -16,13 +15,10 @@ import {
   ArrowDownToLine,
   LogOut,
   Loader2,
-  Eye,
-  Zap,
-  Search,
-  Brain,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useWallet } from '@/lib/wallet-context';
 import { useVault } from '@/lib/use-vault';
 import { ConnectWalletButton } from '@/components/wallet/connect-button';
@@ -154,14 +150,15 @@ export default function PortfolioPage() {
               <span className="text-sm">Back to Chat</span>
             </Link>
             <div className="w-px h-5 bg-border-subtle" />
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-[8px] bg-accent/10 flex items-center justify-center">
-                <Activity className="w-3.5 h-3.5 text-accent" />
-              </div>
-              <span className="font-display text-sm font-bold text-text-primary">
-                YieldMind
-              </span>
-            </div>
+            <Link href="/" className="flex items-center">
+              <Image
+                src="/cropped.png"
+                alt="YieldMind"
+                width={130}
+                height={32}
+                className="h-7 w-auto"
+              />
+            </Link>
           </div>
           <ConnectWalletButton />
         </div>
@@ -605,9 +602,13 @@ export default function PortfolioPage() {
               className="glass-card p-5 mb-8"
             >
               <div className="flex items-center gap-3 mb-5">
-                <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center">
-                  <Activity className="w-4 h-4 text-accent" />
-                </div>
+                <Image
+                  src="/cropped.png"
+                  alt="YieldMind"
+                  width={100}
+                  height={25}
+                  className="h-5 w-auto opacity-70"
+                />
                 <div>
                   <h3 className="text-sm font-semibold text-text-primary">
                     Agent Network — How Your Strategy Was Built
@@ -619,34 +620,30 @@ export default function PortfolioPage() {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <AgentCard
-                  icon={<Search className="w-4 h-4" />}
+                  iconSrc="/scout.png"
                   name="Scout"
                   color="text-supply"
-                  bg="bg-badge-supply"
                   role="Data Discovery"
                   description="Scans Bonzo Finance lending reserves in real-time. Fetches APY rates, TVL, and risk metrics from live mainnet data."
                 />
                 <AgentCard
-                  icon={<Brain className="w-4 h-4" />}
+                  iconSrc="/strategist.png"
                   name="Strategist"
                   color="text-accent"
-                  bg="bg-badge-accent"
                   role="Strategy Design"
                   description="Analyzes your risk tolerance and maps it to optimal Bonzo vault allocations using Claude AI reasoning."
                 />
                 <AgentCard
-                  icon={<Zap className="w-4 h-4" />}
+                  iconSrc="/execute.png"
                   name="Executor"
                   color="text-borrow"
-                  bg="bg-badge-borrow"
                   role="On-Chain Execution"
                   description="Handles the deposit into YieldMindVault. Verifies transactions via Mirror Node and publishes proof to HCS."
                 />
                 <AgentCard
-                  icon={<Eye className="w-4 h-4" />}
+                  iconSrc="/sentinel.png"
                   name="Sentinel"
                   color="text-danger"
-                  bg="bg-badge-danger"
                   role="Position Monitoring"
                   description="Monitors token prices and market volatility 24/7. Triggers alerts and emergency exits when thresholds are breached."
                 />
@@ -661,8 +658,8 @@ export default function PortfolioPage() {
               className="glass-card p-5"
             >
               <div className="flex items-center gap-3 mb-3">
-                <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center">
-                  <Shield className="w-4 h-4 text-accent" />
+                <div className="w-8 h-8 rounded-[8px] bg-[#F7F6F0] flex items-center justify-center overflow-hidden">
+                  <img src="/sentinel.png" alt="On-chain" className="w-5 h-5 object-contain" />
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-text-primary">
@@ -860,25 +857,23 @@ function FlowArrow() {
 }
 
 function AgentCard({
-  icon,
+  iconSrc,
   name,
   color,
-  bg,
   role,
   description,
 }: {
-  icon: React.ReactNode;
+  iconSrc: string;
   name: string;
   color: string;
-  bg: string;
   role: string;
   description: string;
 }) {
   return (
     <div className="px-4 py-3 rounded-[8px] bg-surface">
-      <div className="flex items-center gap-2 mb-2">
-        <div className={`rounded-full ${bg} p-1.5`}>
-          <span className={color}>{icon}</span>
+      <div className="flex items-center gap-2.5 mb-2">
+        <div className="w-8 h-8 rounded-[8px] bg-[#F7F6F0] flex items-center justify-center flex-shrink-0 overflow-hidden">
+          <img src={iconSrc} alt={name} className="w-5 h-5 object-contain" />
         </div>
         <div>
           <div className={`text-sm font-medium ${color}`}>{name}</div>

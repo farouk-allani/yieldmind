@@ -1,25 +1,18 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { FileText, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import type { DecisionLog, AgentRole } from '@/lib/types';
 
 interface DecisionLogPanelProps {
   decisions: DecisionLog[];
 }
 
-const ROLE_COLORS: Record<AgentRole, { text: string; bg: string }> = {
-  scout: { text: 'text-supply', bg: 'bg-badge-supply' },
-  strategist: { text: 'text-accent', bg: 'bg-badge-accent' },
-  executor: { text: 'text-borrow', bg: 'bg-badge-borrow' },
-  sentinel: { text: 'text-danger', bg: 'bg-badge-danger' },
-};
-
-const ROLE_LABELS: Record<AgentRole, string> = {
-  scout: 'SCT',
-  strategist: 'STR',
-  executor: 'EXE',
-  sentinel: 'SNT',
+const ROLE_CONFIG: Record<AgentRole, { label: string; icon: string; text: string; bg: string }> = {
+  scout: { label: 'SCT', icon: '/scout.png', text: 'text-supply', bg: 'bg-badge-supply' },
+  strategist: { label: 'STR', icon: '/strategist.png', text: 'text-accent', bg: 'bg-badge-accent' },
+  executor: { label: 'EXE', icon: '/execute.png', text: 'text-borrow', bg: 'bg-badge-borrow' },
+  sentinel: { label: 'SNT', icon: '/sentinel.png', text: 'text-danger', bg: 'bg-badge-danger' },
 };
 
 function getConfidenceColor(confidence: number): string {
@@ -48,17 +41,18 @@ export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
 
   return (
     <div>
-      <div className="flex items-center gap-2 mb-3">
-        <FileText className="w-3.5 h-3.5 text-text-muted" />
-        <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
-          Decision Trail
-        </h3>
-        <span className="text-[11px] text-text-muted">
-          {decisions.length} logged
-        </span>
-        <div className="ml-auto flex items-center gap-1.5 px-2 py-0.5 rounded-[8px] bg-surface">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+            HCS Decision Trail
+          </h3>
+          <span className="text-[11px] text-text-muted">
+            {decisions.length} logged
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-[8px] bg-surface">
           <div className="w-1 h-1 rounded-full bg-supply animate-pulse" />
-          <span className="text-[11px] text-text-muted">HCS On-Chain</span>
+          <span className="text-[10px] text-text-muted">On-Chain</span>
         </div>
       </div>
 
@@ -70,7 +64,7 @@ export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
             </p>
           ) : (
             sortedDecisions.map((decision, i) => {
-              const roleColor = ROLE_COLORS[decision.agentRole];
+              const config = ROLE_CONFIG[decision.agentRole];
               const dataSource = getDataSourceLabel(decision.data);
               const hashscanUrl = getHashScanUrl(decision.data);
 
@@ -83,10 +77,17 @@ export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
                   className="glass-card px-3 py-2.5"
                 >
                   <div className="flex items-center gap-2 mb-1.5">
+                    <div className="w-5 h-5 rounded-[4px] bg-[#F7F6F0] flex items-center justify-center flex-shrink-0 overflow-hidden">
+                      <img
+                        src={config.icon}
+                        alt={config.label}
+                        className="w-3 h-3 object-contain"
+                      />
+                    </div>
                     <span
-                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-[4px] ${roleColor.bg} ${roleColor.text}`}
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-[4px] ${config.bg} ${config.text}`}
                     >
-                      {ROLE_LABELS[decision.agentRole]}
+                      {config.label}
                     </span>
                     <span className="text-[11px] text-text-secondary">
                       {decision.action}
@@ -101,11 +102,11 @@ export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
                     </span>
                   </div>
 
-                  <p className="text-sm text-text-secondary leading-relaxed">
+                  <p className="text-sm text-text-secondary leading-relaxed ml-7">
                     {decision.reasoning}
                   </p>
 
-                  <div className="flex items-center gap-3 mt-1.5">
+                  <div className="flex items-center gap-3 mt-1.5 ml-7">
                     <span className="text-[11px] text-text-muted">
                       confidence:{' '}
                       <span className={`font-medium ${getConfidenceColor(decision.confidence)}`}>
