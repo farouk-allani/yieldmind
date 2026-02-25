@@ -15,7 +15,7 @@ const config: Config = {
           hover: 'rgba(255,255,255,0.02)',
         },
         border: {
-          subtle: 'rgba(255,255,255,0.1)',
+          subtle: 'rgba(255,255,255,0.3)',
         },
         text: {
           primary: '#F7F6F0',

@@ -54,10 +54,11 @@ export default function AppPage() {
               Live Data
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-supply" />
+              <img src="/hbar.webp" alt="Hedera" className="w-4 h-4 rounded-full" />
               <span className="text-[11px] text-text-secondary">
                 Hedera Testnet
               </span>
+              <div className="w-1.5 h-1.5 rounded-full bg-supply" />
             </div>
             <ConnectWalletButton />
           </div>

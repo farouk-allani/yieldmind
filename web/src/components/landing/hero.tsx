@@ -110,20 +110,20 @@ export function Hero() {
         </div>
 
         {/* Trust line */}
-        <p className="text-[13px] text-text-muted mt-4 flex items-center gap-3 flex-wrap justify-center">
+        <div className="text-[13px] text-text-muted mt-4 flex items-center gap-4 flex-wrap justify-center">
           <span className="flex items-center gap-1.5">
-            <span className="w-1 h-1 rounded-full bg-supply" />
+            <img src="/hbar.webp" alt="Hedera" className="w-4 h-4 rounded-full" />
             Built on Hedera
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-1 h-1 rounded-full bg-accent" />
+            <img src="/bonzo.webp" alt="Bonzo" className="w-4 h-4 rounded-full" />
             Powered by Bonzo Vaults
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-1 h-1 rounded-full bg-borrow" />
             Every decision on-chain
           </span>
-        </p>
+        </div>
       </motion.div>
     </section>
   );

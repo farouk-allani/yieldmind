@@ -353,7 +353,8 @@ function StrategyApprovalCard({
           <span className="text-[11px] text-text-muted uppercase tracking-wide">
             Deposit Amount
           </span>
-          <span className="text-base font-bold text-text-primary">
+          <span className="text-base font-bold text-text-primary flex items-center gap-1.5">
+            <img src="/hbar.webp" alt="HBAR" className="w-5 h-5 rounded-full" />
             {amount} {tokenSymbol}
           </span>
         </div>
@@ -365,10 +366,13 @@ function StrategyApprovalCard({
               key={i}
               className="flex items-center justify-between py-1.5 px-3 rounded-[8px] bg-surface"
             >
-              <div>
-                <div className="text-sm text-text-primary">{v.vaultName}</div>
-                <div className="text-[11px] text-text-muted">
-                  {v.riskLevel} risk
+              <div className="flex items-center gap-2.5">
+                <img src="/bonzo.webp" alt="Bonzo" className="w-6 h-6 rounded-full flex-shrink-0" />
+                <div>
+                  <div className="text-sm text-text-primary">{v.vaultName}</div>
+                  <div className="text-[11px] text-text-muted">
+                    {v.riskLevel} risk
+                  </div>
                 </div>
               </div>
               <div className="text-right">

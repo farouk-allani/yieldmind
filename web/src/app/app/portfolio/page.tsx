@@ -286,7 +286,7 @@ export default function PortfolioPage() {
                   <div className="flex flex-col lg:flex-row items-stretch gap-4">
                     {/* Step 1: Your Wallet */}
                     <FlowStep
-                      icon={<Vault className="w-4 h-4 text-accent" />}
+                      icon={<img src="/hbar.webp" alt="HBAR" className="w-5 h-5 rounded-full" />}
                       title="Your Wallet"
                       subtitle={wallet.address ? `${wallet.address.slice(0, 8)}...${wallet.address.slice(-6)}` : ''}
                       detail={`${walletBalance.toFixed(2)} HBAR available`}
@@ -309,7 +309,7 @@ export default function PortfolioPage() {
 
                     {/* Step 3: Bonzo Strategy (future/mainnet) */}
                     <FlowStep
-                      icon={<TrendingUp className="w-4 h-4 text-points" />}
+                      icon={<img src="/bonzo.webp" alt="Bonzo" className="w-5 h-5 rounded-full" />}
                       title="Bonzo Lending Pools"
                       subtitle="Mainnet — coming soon"
                       detail="Strategy powered by live Bonzo data"
@@ -388,11 +388,7 @@ export default function PortfolioPage() {
                       <tr className="border-b border-border-subtle hover:bg-surface/50 transition-colors">
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-badge-supply flex items-center justify-center">
-                              <span className="text-xs font-bold text-supply">
-                                H
-                              </span>
-                            </div>
+                            <img src="/hbar.webp" alt="HBAR" className="w-8 h-8 rounded-full" />
                             <div>
                               <div className="font-medium text-text-primary">
                                 HBAR
@@ -694,8 +690,9 @@ export default function PortfolioPage() {
                   </div>
                 </div>
                 <div className="px-4 py-3 rounded-[8px] bg-surface">
-                  <div className="text-[11px] text-text-muted mb-1">
-                    Bonzo Integration
+                  <div className="flex items-center gap-2 mb-1">
+                    <img src="/bonzo.webp" alt="Bonzo" className="w-4 h-4 rounded-full" />
+                    <span className="text-[11px] text-text-muted">Bonzo Integration</span>
                   </div>
                   <div className="text-sm text-text-primary font-medium">
                     Live Mainnet Data
@@ -970,7 +967,8 @@ function WithdrawModal({
                   <div className="text-[11px] text-text-muted mb-1">
                     Available to Withdraw
                   </div>
-                  <div className="text-lg font-bold text-text-primary">
+                  <div className="text-lg font-bold text-text-primary flex items-center gap-2">
+                    <img src="/hbar.webp" alt="HBAR" className="w-5 h-5 rounded-full" />
                     {userDeposited.toFixed(2)} HBAR
                   </div>
                 </div>

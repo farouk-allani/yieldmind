@@ -1,15 +1,19 @@
 import {
   Layers,
-  Landmark,
   MessageSquareText,
   Coins,
   Link2,
   Triangle,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
-const techs = [
-  { name: 'Hedera', icon: Layers, description: 'Blockchain' },
-  { name: 'Bonzo Finance', icon: Landmark, description: 'DeFi Vaults' },
+type TechItem =
+  | { name: string; icon: LucideIcon; image?: undefined; description: string }
+  | { name: string; image: string; icon?: undefined; description: string };
+
+const techs: TechItem[] = [
+  { name: 'Hedera', image: '/hbar.webp', description: 'Blockchain' },
+  { name: 'Bonzo Finance', image: '/bonzo.webp', description: 'DeFi Vaults' },
   { name: 'HCS', icon: MessageSquareText, description: 'Consensus' },
   { name: 'HTS', icon: Coins, description: 'Token Service' },
   { name: 'LangChain', icon: Link2, description: 'AI Framework' },
@@ -30,8 +34,16 @@ export function TechStack() {
               key={tech.name}
               className="flex items-center gap-2.5 px-4 py-2 rounded-[8px] border border-border-subtle bg-surface/50 hover:bg-surface transition-colors"
             >
-              <div className="w-7 h-7 rounded-[6px] bg-page flex items-center justify-center">
-                <tech.icon className="w-3.5 h-3.5 text-text-muted" />
+              <div className="w-7 h-7 rounded-full overflow-hidden bg-page flex items-center justify-center flex-shrink-0">
+                {tech.image ? (
+                  <img
+                    src={tech.image}
+                    alt={tech.name}
+                    className="w-7 h-7 object-cover"
+                  />
+                ) : tech.icon ? (
+                  <tech.icon className="w-3.5 h-3.5 text-text-muted" />
+                ) : null}
               </div>
               <div>
                 <span className="text-[13px] text-text-primary font-medium block leading-tight">

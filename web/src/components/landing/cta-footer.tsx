@@ -61,16 +61,19 @@ export function Footer() {
           {[
             { label: 'GitHub', href: 'https://github.com' },
             { label: 'Docs', href: '#' },
-            { label: 'Hedera', href: 'https://hedera.com' },
-            { label: 'Bonzo', href: 'https://bonzo.finance' },
+            { label: 'Hedera', href: 'https://hedera.com', image: '/hbar.webp' },
+            { label: 'Bonzo', href: 'https://bonzo.finance', image: '/bonzo.webp' },
           ].map((link) => (
             <a
               key={link.label}
               href={link.href}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[13px] text-text-muted hover:text-text-secondary transition-colors"
+              className="text-[13px] text-text-muted hover:text-text-secondary transition-colors flex items-center gap-1.5"
             >
+              {'image' in link && link.image && (
+                <img src={link.image} alt="" className="w-4 h-4 rounded-full" />
+              )}
               {link.label}
             </a>
           ))}
