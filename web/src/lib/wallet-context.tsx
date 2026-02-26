@@ -9,14 +9,16 @@ import {
   type ReactNode,
 } from 'react';
 import { BrowserProvider, formatEther } from 'ethers';
+import { getNetworkConfig } from './network-config';
 
-// Hedera Testnet chain config
-const HEDERA_TESTNET = {
-  chainId: '0x128', // 296 decimal
-  chainName: 'Hedera Testnet',
-  rpcUrls: ['https://testnet.hashio.io/api'],
+// Dynamic chain config based on NEXT_PUBLIC_HEDERA_NETWORK
+const networkConfig = getNetworkConfig();
+const HEDERA_CHAIN = {
+  chainId: networkConfig.chainIdHex,
+  chainName: networkConfig.chainName,
+  rpcUrls: [networkConfig.rpcUrl],
   nativeCurrency: { name: 'HBAR', symbol: 'HBAR', decimals: 18 },
-  blockExplorerUrls: ['https://hashscan.io/testnet'],
+  blockExplorerUrls: [networkConfig.hashscanBaseUrl],
 };
 
 interface WalletState {
@@ -29,6 +31,8 @@ interface WalletState {
   provider: BrowserProvider | null;
   connect: () => Promise<void>;
   disconnect: () => void;
+  switchToHedera: () => Promise<void>;
+  /** @deprecated Use switchToHedera() instead */
   switchToHederaTestnet: () => Promise<void>;
   refreshBalance: () => Promise<void>;
 }
@@ -43,6 +47,7 @@ const WalletContext = createContext<WalletState>({
   provider: null,
   connect: async () => {},
   disconnect: () => {},
+  switchToHedera: async () => {},
   switchToHederaTestnet: async () => {},
   refreshBalance: async () => {},
 });
@@ -59,7 +64,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [provider, setProvider] = useState<BrowserProvider | null>(null);
 
   const isConnected = !!address;
-  const isCorrectNetwork = chainId === 296;
+  const isCorrectNetwork = chainId === networkConfig.chainId;
 
   const refreshBalance = useCallback(async () => {
     if (!provider || !address) return;
@@ -167,13 +172,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('ym_wallet_connected');
   }, []);
 
-  const switchToHederaTestnet = useCallback(async () => {
+  const switchToHedera = useCallback(async () => {
     if (!window.ethereum) return;
 
     try {
       await window.ethereum.request({
         method: 'wallet_switchEthereumChain',
-        params: [{ chainId: HEDERA_TESTNET.chainId }],
+        params: [{ chainId: HEDERA_CHAIN.chainId }],
       });
     } catch (switchError: unknown) {
       const err = switchError as { code?: number };
@@ -181,11 +186,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       if (err.code === 4902) {
         await window.ethereum.request({
           method: 'wallet_addEthereumChain',
-          params: [HEDERA_TESTNET],
+          params: [HEDERA_CHAIN],
         });
       }
     }
   }, []);
+
+  // Backward compatibility alias
+  const switchToHederaTestnet = switchToHedera;
 
   return (
     <WalletContext.Provider
@@ -199,6 +207,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         provider,
         connect,
         disconnect,
+        switchToHedera,
         switchToHederaTestnet,
         refreshBalance,
       }}

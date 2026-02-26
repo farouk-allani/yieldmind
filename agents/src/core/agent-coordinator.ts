@@ -9,6 +9,7 @@ import type {
 } from '../types/index.js';
 import type { HCSService } from '../hedera/hcs.js';
 import type { HederaClient } from '../hedera/client.js';
+import { getHashscanTransactionUrl } from '../config/index.js';
 import type { ScoutAgent } from '../agents/scout.js';
 import type { StrategistAgent } from '../agents/strategist.js';
 import type { ExecutorAgent } from '../agents/executor.js';
@@ -188,7 +189,7 @@ export class AgentCoordinator {
         });
     }
 
-    const hashscanUrl = `https://hashscan.io/testnet/transaction/${confirmation.txHash}`;
+    const hashscanUrl = getHashscanTransactionUrl(confirmation.txHash);
 
     const message = verification.verified
       ? [

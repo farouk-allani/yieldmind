@@ -1,4 +1,6 @@
 import type { VaultInfo, RiskTolerance } from '../types/index.js';
+import { getNetworkConfig } from '../config/index.js';
+import type { HederaNetwork } from '../config/index.js';
 
 /**
  * BonzoVaultClient — Fetches REAL data from Bonzo Finance on Hedera.
@@ -8,13 +10,9 @@ import type { VaultInfo, RiskTolerance } from '../types/index.js';
  * 2. Hedera Mirror Node → on-chain supply APY rates via getReserveData()
  * 3. CoinGecko → USD prices for TVL calculation
  *
- * Uses mainnet data (Bonzo is only deployed on mainnet).
- * Execution happens on testnet for the hackathon demo.
+ * By default, always reads from mainnet data API (where real Bonzo reserves exist)
+ * regardless of execution network. Pass dataSourceNetwork to override.
  */
-
-const BONZO_DATA_API = 'https://mainnet-data-staging.bonzo.finance';
-const MIRROR_NODE = 'https://mainnet.mirrornode.hedera.com';
-const PROTOCOL_DATA_PROVIDER = '0x78feDC4D7010E409A0c0c7aF964cc517D3dCde18';
 
 interface BonzoReserve {
   id: number;
@@ -46,9 +44,29 @@ interface ReserveRates {
 }
 
 export class BonzoVaultClient {
+  private readonly dataApiUrl: string;
+  private readonly mirrorNodeUrl: string;
+  private readonly protocolDataProvider: string;
   private cachedVaults: VaultInfo[] | null = null;
   private cacheExpiry = 0;
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  constructor(options?: { dataSourceNetwork?: HederaNetwork }) {
+    const config = getNetworkConfig();
+    // For vault data, always read from mainnet (where real reserves exist)
+    // unless explicitly overridden
+    const useMainnet = (options?.dataSourceNetwork ?? 'mainnet') === 'mainnet';
+
+    if (useMainnet) {
+      this.dataApiUrl = 'https://mainnet-data-staging.bonzo.finance';
+      this.mirrorNodeUrl = 'https://mainnet.mirrornode.hedera.com';
+      this.protocolDataProvider = '0x78feDC4D7010E409A0c0c7aF964cc517D3dCde18';
+    } else {
+      this.dataApiUrl = config.bonzo.dataApiUrl;
+      this.mirrorNodeUrl = config.mirrorNodeUrl;
+      this.protocolDataProvider = config.bonzo.protocolDataProviderAddress;
+    }
+  }
 
   /**
    * Fetch all Bonzo lending reserves with live on-chain data.
@@ -61,7 +79,7 @@ export class BonzoVaultClient {
 
     try {
       // Step 1: Fetch reserve metadata from Bonzo Data API
-      const response = await fetch(BONZO_DATA_API);
+      const response = await fetch(this.dataApiUrl);
       if (!response.ok) {
         throw new Error(`Bonzo API returned ${response.status}`);
       }
@@ -143,12 +161,12 @@ export class BonzoVaultClient {
       .padStart(64, '0');
     const callData = `0x35ea6a75${paddedAddress}`;
 
-    const response = await fetch(`${MIRROR_NODE}/api/v1/contracts/call`, {
+    const response = await fetch(`${this.mirrorNodeUrl}/api/v1/contracts/call`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         data: callData,
-        to: PROTOCOL_DATA_PROVIDER,
+        to: this.protocolDataProvider,
         estimate: false,
       }),
     });

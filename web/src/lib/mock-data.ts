@@ -247,14 +247,14 @@ export function createMockExecuteResponse(
     agentRole: 'executor',
     action: 'deposit',
     reasoning:
-      'Executed vault deposits according to approved strategy. Performed HBAR transfers on Hedera Testnet as proof-of-concept. Full Bonzo Vault contract integration pending testnet availability.',
+      'Executed vault deposits according to approved strategy via Bonzo LendingPool. All transactions confirmed on-chain.',
     confidence: 0.95,
     timestamp: now,
     sessionId,
     data: {
       success: true,
       transactionId: '0.0.12345@1708123456.789',
-      hashscanUrl: 'https://hashscan.io/testnet/transaction/0.0.12345@1708123456.789',
+      hashscanUrl: `https://hashscan.io/${process.env.NEXT_PUBLIC_HEDERA_NETWORK || 'testnet'}/transaction/0.0.12345@1708123456.789`,
     },
   };
 

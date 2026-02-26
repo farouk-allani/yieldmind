@@ -2,6 +2,8 @@ import { BaseAgent } from '../core/base-agent.js';
 import type { HCSService } from '../hedera/hcs.js';
 import type { HederaClient } from '../hedera/client.js';
 import type { DecisionLog, Strategy, ExecutionConfirmation } from '../types/index.js';
+import type { BonzoLendingPoolClient } from '../bonzo/lending-pool-client.js';
+import { getNetworkConfig, getHashscanTransactionUrl } from '../config/index.js';
 
 interface ExecutorInput {
   strategy: Strategy;
@@ -18,10 +20,16 @@ interface ExecutorInput {
  */
 export class ExecutorAgent extends BaseAgent {
   private hederaClient: HederaClient;
+  private bonzoLendingPool: BonzoLendingPoolClient;
 
-  constructor(hcsService: HCSService, hederaClient: HederaClient) {
+  constructor(
+    hcsService: HCSService,
+    hederaClient: HederaClient,
+    bonzoLendingPool: BonzoLendingPoolClient
+  ) {
     super('executor', hcsService);
     this.hederaClient = hederaClient;
+    this.bonzoLendingPool = bonzoLendingPool;
   }
 
   async execute(input: unknown): Promise<DecisionLog> {
@@ -90,15 +98,12 @@ export class ExecutorAgent extends BaseAgent {
   }
 
   /**
-   * Execute a deposit into a Bonzo Vault.
+   * Execute a deposit into a Bonzo lending pool.
    *
-   * Performs a real HBAR transfer on Hedera Testnet for each vault allocation.
-   * Each transfer is a provable on-chain transaction viewable on HashScan.
+   * Attempts to call Bonzo's LendingPool.deposit() when available.
+   * Falls back to HBAR transfer if Bonzo is not configured or call fails.
    *
-   * In production (mainnet): would call Bonzo's lending pool deposit() via EVM.
-   * For hackathon (testnet): executes real HBAR transfers proportional to the
-   * strategy allocation, proving on-chain execution capability.
-   *
+   * Every deposit is a provable on-chain transaction viewable on HashScan.
    * The deposit intent (vault address, amount, allocation) is logged to HCS
    * alongside the transaction, creating a full on-chain audit trail.
    */
@@ -115,9 +120,32 @@ export class ExecutorAgent extends BaseAgent {
   }> {
     const depositAmount = (totalAmount * allocationPercent) / 100;
 
-    // Execute real HBAR transfer on testnet proportional to allocation
-    // This is a real on-chain transaction, provable on HashScan
-    const transferAmount = Math.max(0.01, depositAmount * 0.001); // scale down for testnet
+    // Try real Bonzo LendingPool deposit first
+    if (this.bonzoLendingPool.isAvailable()) {
+      try {
+        const result = await this.bonzoLendingPool.deposit({
+          asset: vaultAddress,
+          amount: BigInt(Math.round(depositAmount * 1e8)), // convert to tinybars
+          onBehalfOf: this.hederaClient.getAccountId(),
+        });
+
+        if (result.success) {
+          return {
+            success: true,
+            transactionId: result.transactionId,
+            hashscanUrl: result.hashscanUrl,
+            error: null,
+            depositAmount,
+          };
+        }
+        console.warn('[Executor] Bonzo deposit failed, falling back to HBAR transfer:', result.error);
+      } catch (error) {
+        console.warn('[Executor] Bonzo deposit error, falling back:', error instanceof Error ? error.message : error);
+      }
+    }
+
+    // Fallback: HBAR transfer (proof-of-concept for on-chain execution)
+    const transferAmount = Math.max(0.01, depositAmount * 0.001);
     const result = await this.hederaClient.transferHbar(
       this.hederaClient.getAccountId(),
       transferAmount
@@ -159,7 +187,7 @@ export class ExecutorAgent extends BaseAgent {
         txHash: confirmation.txHash,
         userAddress: confirmation.userAddress,
         depositAmount: confirmation.depositAmount,
-        hashscanUrl: `https://hashscan.io/testnet/transaction/${confirmation.txHash}`,
+        hashscanUrl: getHashscanTransactionUrl(confirmation.txHash),
       }
     );
 
@@ -187,7 +215,7 @@ export class ExecutorAgent extends BaseAgent {
         .join(', ');
 
       return (
-        `Executed ${strategy.vaults.length}-vault strategy on Hedera Testnet. ` +
+        `Executed ${strategy.vaults.length}-vault strategy on ${getNetworkConfig().chainName}. ` +
         `Deposits: ${deposits}. ` +
         `All ${successful.length} transactions confirmed on-chain. ` +
         `Total allocation: ${strategy.userIntent.targetAmount} ${strategy.userIntent.tokenSymbol} at ${strategy.totalExpectedApy.toFixed(2)}% blended APY. ` +

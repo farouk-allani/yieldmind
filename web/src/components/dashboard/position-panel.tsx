@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { TrendingUp, Vault, ExternalLink, RefreshCw, Shield } from 'lucide-react';
 import { useWallet } from '@/lib/wallet-context';
 import { useVault } from '@/lib/use-vault';
+import { hashscanAccountUrl, hashscanContractUrl } from '@/lib/network-config';
 import type { Strategy } from '@/lib/types';
 
 interface PositionPanelProps {
@@ -96,7 +97,7 @@ export function PositionPanel({ activeStrategy }: PositionPanelProps) {
             </div>
             {hasPosition && (
               <a
-                href={`https://hashscan.io/testnet/account/${wallet.address}`}
+                href={hashscanAccountUrl(wallet.address!)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="p-1.5 rounded-[8px] hover:bg-surface transition-colors"
@@ -192,7 +193,7 @@ export function PositionPanel({ activeStrategy }: PositionPanelProps) {
         {/* Contract link */}
         {hasPosition && (
           <a
-            href={`https://hashscan.io/testnet/contract/${process.env.NEXT_PUBLIC_VAULT_CONTRACT_ADDRESS}`}
+            href={hashscanContractUrl(process.env.NEXT_PUBLIC_VAULT_CONTRACT_ADDRESS || '')}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-center gap-1.5 text-[11px] text-accent hover:text-accent/80 transition-colors py-1.5"

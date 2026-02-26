@@ -21,6 +21,12 @@ const config: HardhatUserConfig = {
       accounts: HEDERA_PRIVATE_KEY_HEX ? [HEDERA_PRIVATE_KEY_HEX] : [],
       timeout: 60000,
     },
+    hederaMainnet: {
+      url: "https://mainnet.hashio.io/api",
+      chainId: 295,
+      accounts: HEDERA_PRIVATE_KEY_HEX ? [HEDERA_PRIVATE_KEY_HEX] : [],
+      timeout: 60000,
+    },
   },
 };
 

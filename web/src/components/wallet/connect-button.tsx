@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Wallet, ChevronDown, ExternalLink, LogOut, AlertTriangle } from 'lucide-react';
 import { useWallet } from '@/lib/wallet-context';
+import { getNetworkConfig, hashscanAccountUrl } from '@/lib/network-config';
 
 export function ConnectWalletButton() {
   const {
@@ -13,7 +14,7 @@ export function ConnectWalletButton() {
     isConnecting,
     connect,
     disconnect,
-    switchToHederaTestnet,
+    switchToHedera,
   } = useWallet();
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -48,11 +49,11 @@ export function ConnectWalletButton() {
   if (!isCorrectNetwork) {
     return (
       <button
-        onClick={switchToHederaTestnet}
+        onClick={switchToHedera}
         className="flex items-center gap-2 px-3 h-9 rounded-[8px] bg-borrow/20 text-borrow text-sm font-medium hover:bg-borrow/30 transition-colors"
       >
         <AlertTriangle className="w-4 h-4" />
-        Switch to Hedera Testnet
+        Switch to {getNetworkConfig().chainName}
       </button>
     );
   }
@@ -89,7 +90,7 @@ export function ConnectWalletButton() {
 
           <div className="p-1.5">
             <a
-              href={`https://hashscan.io/testnet/account/${address}`}
+              href={hashscanAccountUrl(address!)}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 px-2.5 py-2 rounded-[8px] text-sm text-text-secondary hover:bg-[#252840] transition-colors w-full"

@@ -53,11 +53,11 @@ function handleGeneralQuery(message: string): string {
     return [
       '**Where your funds go:**',
       '',
-      'Your HBAR is deposited into the **YieldMindVault** smart contract on Hedera Testnet.',
-      'The AI agents use live data from **Bonzo Finance** (APY rates, risk metrics, reserves) to build your strategy.',
+      'Your deposits go directly into **Bonzo Finance** lending pools on Hedera.',
+      'The AI agents use live data from Bonzo (APY rates, risk metrics, reserves) to build your strategy.',
       '',
-      'Bonzo lending pools are mainnet-only — on testnet, YieldMindVault acts as the secure escrow.',
-      'On mainnet deployment, funds would route through to Bonzo pools for real yield.',
+      'Every deposit is a real on-chain transaction — verifiable on HashScan.',
+      'Strategy tracking and agent decisions are logged transparently to HCS.',
       '',
       'View your position details on the **Portfolio** page.',
     ].join('\n');

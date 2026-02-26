@@ -23,6 +23,7 @@ import { useWallet } from '@/lib/wallet-context';
 import { useVault } from '@/lib/use-vault';
 import { ConnectWalletButton } from '@/components/wallet/connect-button';
 import { VAULT_ADDRESS } from '@/lib/vault-abi';
+import { getNetworkConfig, hashscanContractUrl, hashscanAccountUrl, hashscanTxUrl } from '@/lib/network-config';
 
 export default function PortfolioPage() {
   const wallet = useWallet();
@@ -275,7 +276,7 @@ export default function PortfolioPage() {
                     </p>
                   </div>
                   <a
-                    href={`https://hashscan.io/testnet/contract/${VAULT_ADDRESS}`}
+                    href={hashscanContractUrl(VAULT_ADDRESS)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1.5 text-[11px] text-accent hover:text-accent/80 transition-colors"
@@ -329,7 +330,7 @@ export default function PortfolioPage() {
                         <strong className="text-text-primary">Testnet:</strong>{' '}
                         Your HBAR is held in the{' '}
                         <span className="text-supply font-medium">YieldMindVault</span>{' '}
-                        smart contract on Hedera Testnet. The AI agents use live data from{' '}
+                        smart contract on {getNetworkConfig().chainName}. The AI agents use live data from{' '}
                         <span className="text-points font-medium">Bonzo Finance</span>{' '}
                         (APY rates, risk metrics, reserve data) to build optimal strategies.
                         The vault is secured with OpenZeppelin ReentrancyGuard and fully
@@ -416,7 +417,7 @@ export default function PortfolioPage() {
                         </td>
                         <td className="px-5 py-4 text-right">
                           <a
-                            href={`https://hashscan.io/testnet/contract/${VAULT_ADDRESS}`}
+                            href={hashscanContractUrl(VAULT_ADDRESS)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-accent hover:text-accent/80 transition-colors font-mono text-[11px]"
@@ -472,7 +473,7 @@ export default function PortfolioPage() {
                     <div className="flex items-center gap-1.5">
                       <div className="w-1.5 h-1.5 rounded-full bg-supply" />
                       <span className="text-sm text-text-primary">
-                        Hedera Testnet
+                        {getNetworkConfig().chainName}
                       </span>
                     </div>
                   </DetailRow>
@@ -481,7 +482,7 @@ export default function PortfolioPage() {
                   </DetailRow>
                   <div className="pt-2">
                     <a
-                      href={`https://hashscan.io/testnet/account/${wallet.address}`}
+                      href={hashscanAccountUrl(wallet.address!)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1.5 text-sm text-accent hover:text-accent/80 transition-colors"
@@ -538,7 +539,7 @@ export default function PortfolioPage() {
                   </DetailRow>
                   <div className="pt-2">
                     <a
-                      href={`https://hashscan.io/testnet/contract/${VAULT_ADDRESS}`}
+                      href={hashscanContractUrl(VAULT_ADDRESS)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center gap-1.5 text-sm text-accent hover:text-accent/80 transition-colors"
@@ -949,7 +950,7 @@ function WithdrawModal({
                   <span className="text-sm font-medium">Withdrawal Confirmed</span>
                 </div>
                 <a
-                  href={`https://hashscan.io/testnet/transaction/${withdrawTxHash}`}
+                  href={hashscanTxUrl(withdrawTxHash)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1.5 text-sm text-accent hover:text-accent/80 transition-colors"

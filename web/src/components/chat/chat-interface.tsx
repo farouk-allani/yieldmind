@@ -6,6 +6,7 @@ import { Send, MessageSquare, Check, X, Loader2, Wallet } from 'lucide-react';
 import { MessageBubble } from './message-bubble';
 import { useWallet } from '@/lib/wallet-context';
 import { useVault } from '@/lib/use-vault';
+import { hashscanTxUrl, getNetworkConfig } from '@/lib/network-config';
 import type { ChatMessage, Strategy } from '@/lib/types';
 import { sendChatMessage } from '@/lib/api';
 
@@ -106,7 +107,7 @@ export function ChatInterface({
           role: 'assistant',
           content:
             data.message ||
-            `Deposit confirmed! View on HashScan: https://hashscan.io/testnet/transaction/${result.txHash}`,
+            `Deposit confirmed! View on HashScan: ${hashscanTxUrl(result.txHash!)}`,
           timestamp: new Date().toISOString(),
           agentStates: data.agentStates,
           strategy: data.strategy,
@@ -121,7 +122,7 @@ export function ChatInterface({
         addMessage({
           id: `assistant-confirmed-fallback-${Date.now()}`,
           role: 'assistant',
-          content: `Deposit confirmed on-chain!\n\n**Transaction:** https://hashscan.io/testnet/transaction/${result.txHash}\n\nYour ${amount} HBAR is now in the YieldMindVault contract. The Sentinel agent is monitoring your position.`,
+          content: `Deposit confirmed on-chain!\n\n**Transaction:** ${hashscanTxUrl(result.txHash!)}\n\nYour ${amount} HBAR has been deposited into Bonzo Finance. The Sentinel agent is monitoring your position.`,
           timestamp: new Date().toISOString(),
         });
       }
@@ -265,7 +266,7 @@ export function ChatInterface({
             onApprove={handleApproveDeposit}
             onReject={handleRejectStrategy}
             onConnect={wallet.connect}
-            onSwitchNetwork={wallet.switchToHederaTestnet}
+            onSwitchNetwork={wallet.switchToHedera}
           />
         )}
 
@@ -430,7 +431,7 @@ function StrategyApprovalCard({
               onClick={onSwitchNetwork}
               className="flex-1 flex items-center justify-center gap-2 h-10 rounded-[8px] bg-borrow/20 text-borrow text-sm font-medium hover:bg-borrow/30 transition-colors"
             >
-              Switch to Hedera Testnet
+              Switch to {getNetworkConfig().chainName}
             </button>
           ) : (
             <>

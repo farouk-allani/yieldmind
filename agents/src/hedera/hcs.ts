@@ -5,10 +5,11 @@ import {
 } from '@hashgraph/sdk';
 import type { HCSMessage, DecisionLog, HCSMessageType } from '../types/index.js';
 import { HederaClient } from './client.js';
+import { getNetworkConfig } from '../config/index.js';
 
 const MIRROR_NODE_URL =
   process.env.HEDERA_MIRROR_NODE_URL ||
-  'https://testnet.mirrornode.hedera.com';
+  getNetworkConfig().mirrorNodeUrl;
 
 export class HCSService {
   private hederaClient: HederaClient;

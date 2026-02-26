@@ -7,6 +7,7 @@ import {
   AccountBalanceQuery,
 } from '@hashgraph/sdk';
 import type { TransactionResult } from '../types/index.js';
+import { getNetworkConfig, getHashscanTransactionUrl } from '../config/index.js';
 
 export class HederaClient {
   private client: Client;
@@ -59,7 +60,7 @@ export class HederaClient {
       return {
         success: receipt.status.toString() === 'SUCCESS',
         transactionId: response.transactionId.toString(),
-        hashscanUrl: `https://hashscan.io/testnet/transaction/${response.transactionId.toString()}`,
+        hashscanUrl: getHashscanTransactionUrl(response.transactionId.toString()),
         error: null,
         timestamp: new Date().toISOString(),
       };
@@ -100,7 +101,7 @@ export class HederaClient {
   }> {
     const mirrorUrl =
       process.env.HEDERA_MIRROR_NODE_URL ||
-      'https://testnet.mirrornode.hedera.com';
+      getNetworkConfig().mirrorNodeUrl;
 
     try {
       const response = await fetch(
