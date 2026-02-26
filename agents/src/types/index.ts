@@ -45,7 +45,10 @@ export interface UserIntent {
 // --- Vault Types (Bonzo) ---
 
 export interface VaultInfo {
-  address: string;
+  address: string; // HTS address (0.0.xxxxx)
+  evmAddress: string; // EVM address (0x...) — needed for LendingPool deposits
+  symbol: string; // Token symbol (e.g., 'WHBAR', 'USDC')
+  decimals: number; // Token decimals (e.g., 8 for HBAR, 6 for USDC)
   name: string;
   tokenPair: string; // e.g., "HBAR/USDC"
   apy: number; // annualized percentage yield
@@ -57,7 +60,10 @@ export interface VaultInfo {
 }
 
 export interface VaultStrategy {
-  vaultAddress: string;
+  vaultAddress: string; // HTS address (0.0.xxxxx)
+  assetEvmAddress: string; // EVM address (0x...) — for on-chain deposits
+  symbol: string; // Token symbol — determines HBAR vs ERC-20 deposit flow
+  decimals: number; // Token decimals for correct amount formatting
   vaultName: string;
   allocation: number; // percentage of user's total deposit (0-100)
   expectedApy: number;
@@ -96,6 +102,7 @@ export interface ExecutionConfirmation {
   txHash: string;
   userAddress: string;
   depositAmount: number;
+  tokenSymbol: string;
   sessionId: string;
   strategyId?: string;
 }

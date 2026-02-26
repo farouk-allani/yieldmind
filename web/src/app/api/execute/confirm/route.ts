@@ -10,7 +10,7 @@ import { agentRuntime, getRuntimeError } from '@/lib/runtime';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { txHash, userAddress, depositAmount, sessionId } = body;
+    const { txHash, userAddress, depositAmount, tokenSymbol, sessionId } = body;
 
     if (!txHash || !userAddress || !sessionId) {
       return NextResponse.json(
@@ -32,6 +32,7 @@ export async function POST(request: Request) {
       txHash,
       userAddress,
       depositAmount: depositAmount || 0,
+      tokenSymbol: tokenSymbol || 'HBAR',
       sessionId,
     });
 

@@ -27,7 +27,7 @@ export function createRuntime() {
   try {
     llmClient = new LLMClient();
     console.log(
-      `   LLM: ${process.env.LLM_MODEL || 'qwen/qwen3-235b-a22b:free'} via OpenRouter`
+      `   LLM: ${process.env.LLM_MODEL || 'qwen/qwen3-next-80b-a3b-instruct:free'} via OpenRouter`
     );
   } catch {
     console.log(

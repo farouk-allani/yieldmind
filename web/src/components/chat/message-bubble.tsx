@@ -25,11 +25,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
     >
       {/* Agent avatar for assistant messages */}
       {isAssistant && (
-        <div className="w-7 h-7 rounded-[8px] bg-[#F7F6F0] flex items-center justify-center flex-shrink-0 mr-2 mt-1 overflow-hidden">
+        <div className="w-9 h-8  flex items-center justify-center flex-shrink-0 mr-2 mt-1 overflow-hidden">
           <img
             src="/logo without text.png"
             alt="YieldMind"
-            className="w-5 h-5 object-contain"
+            className="w-9 h-auto object-contain"
           />
         </div>
       )}

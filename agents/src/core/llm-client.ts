@@ -20,10 +20,10 @@ interface LLMResponse {
 
 // Free models ordered by capability — fallback chain
 const FREE_MODEL_FALLBACKS = [
-  'google/gemma-3n-e4b-it:free',
-  'nvidia/nemotron-nano-9b-v2:free',
-  'qwen/qwen3-4b:free',
-  'stepfun/step-3.5-flash:free',
+  'qwen/qwen3-next-80b-a3b-instruct:free',
+  'openai/gpt-oss-120b:free',
+  'z-ai/glm-4.5-air:free',
+  'google/gemma-3-4b-it:free',
 ];
 
 export class LLMClient {
@@ -38,7 +38,7 @@ export class LLMClient {
     }
     this.apiKey = apiKey;
     this.primaryModel =
-      process.env.LLM_MODEL || 'meta-llama/llama-3.3-70b-instruct:free';
+      process.env.LLM_MODEL || 'qwen/qwen3-next-80b-a3b-instruct:free';
     this.baseUrl =
       process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
   }
@@ -58,7 +58,9 @@ export class LLMClient {
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         const isRetryable =
-          msg.includes('402') || msg.includes('429') || msg.includes('400');
+          msg.includes('402') || msg.includes('429') || msg.includes('400') ||
+          msg.includes('503') || msg.includes('502') || msg.includes('404') ||
+          msg.includes('UNAVAILABLE') || msg.includes('No endpoints found');
         if (!isRetryable) throw error;
         console.log(
           `[LLM] ${model} unavailable (rate-limited), trying next...`

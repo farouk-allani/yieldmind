@@ -112,6 +112,9 @@ export class StrategistAgent extends BaseAgent {
     const vaultStrategies: VaultStrategy[] = allocations.map(
       ({ vault, allocation }) => ({
         vaultAddress: vault.address,
+        assetEvmAddress: vault.evmAddress,
+        symbol: vault.symbol,
+        decimals: vault.decimals,
         vaultName: vault.name,
         allocation,
         expectedApy: vault.apy * (allocation / 100),

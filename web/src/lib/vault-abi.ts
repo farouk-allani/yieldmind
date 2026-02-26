@@ -11,6 +11,25 @@ export const BONZO_LENDING_POOL_ABI = [
   'function getUserAccountData(address user) external view returns (uint256 totalCollateralETH, uint256 totalDebtETH, uint256 availableBorrowsETH, uint256 currentLiquidationThreshold, uint256 ltv, uint256 healthFactor)',
 ];
 
+/**
+ * Minimal ERC-20 ABI for token approval before Bonzo LendingPool deposits.
+ * HTS tokens on Hedera expose the standard ERC-20 interface via their EVM address.
+ */
+export const ERC20_ABI = [
+  'function approve(address spender, uint256 amount) external returns (bool)',
+  'function allowance(address owner, address spender) external view returns (uint256)',
+  'function balanceOf(address account) external view returns (uint256)',
+];
+
+/**
+ * Bonzo WETHGateway ABI — wraps native HBAR → WHBAR and deposits into LendingPool.
+ * On Hedera, native HBAR deposits MUST go through WETHGateway, not LendingPool.deposit() directly.
+ */
+export const WETH_GATEWAY_ABI = [
+  'function depositETH(address lendingPool, address onBehalfOf, uint16 referralCode) external payable',
+  'function withdrawETH(address lendingPool, uint256 amount, address to) external',
+];
+
 // Bonzo LendingPool address from env (network-specific)
 export const BONZO_LENDING_POOL_ADDRESS =
   process.env.NEXT_PUBLIC_BONZO_LENDING_POOL_ADDRESS || '';

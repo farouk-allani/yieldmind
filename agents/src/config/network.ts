@@ -17,6 +17,8 @@ export interface BonzoConfig {
   lendingPoolEvmAddress: string;
   /** Bonzo ProtocolDataProvider EVM address for on-chain reads */
   protocolDataProviderAddress: string;
+  /** Bonzo WETHGateway EVM address — required for native HBAR deposits */
+  wethGatewayAddress: string;
 }
 
 export interface NetworkConfig {
@@ -39,10 +41,11 @@ const TESTNET_CONFIG: NetworkConfig = {
   mirrorNodeUrl: 'https://testnet.mirrornode.hedera.com',
   hashscanBaseUrl: 'https://hashscan.io/testnet',
   bonzo: {
-    dataApiUrl: 'https://mainnet-data-staging.bonzo.finance',
-    lendingPoolAddress: '0.0.2664875',
-    lendingPoolEvmAddress: '0x6bf7b21145cbd7bb0b9916e6eb24eda8a675d7c0',
-    protocolDataProviderAddress: '',
+    dataApiUrl: '', // Testnet data API is unavailable — uses hardcoded reserves
+    lendingPoolAddress: '0.0.4999355',
+    lendingPoolEvmAddress: '0xf67DBe9bD1B331cA379c44b5562EAa1CE831EbC2',
+    protocolDataProviderAddress: '0x121A2AFFA5f595175E60E01EAeF0deC43Cc3b024',
+    wethGatewayAddress: '0x16197Ef10F26De77C9873d075f8774BdEc20A75d',
   },
 };
 
@@ -56,9 +59,10 @@ const MAINNET_CONFIG: NetworkConfig = {
   hashscanBaseUrl: 'https://hashscan.io/mainnet',
   bonzo: {
     dataApiUrl: 'https://mainnet-data-staging.bonzo.finance',
-    lendingPoolAddress: '',
-    lendingPoolEvmAddress: '',
+    lendingPoolAddress: '0.0.7308459',
+    lendingPoolEvmAddress: '0x236897c518996163E7b313aD21D1C9fCC7BA1afc',
     protocolDataProviderAddress: '0x78feDC4D7010E409A0c0c7aF964cc517D3dCde18',
+    wethGatewayAddress: '0x9a601543e9264255BebB20Cef0E7924e97127105',
   },
 };
 

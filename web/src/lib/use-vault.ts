@@ -6,9 +6,12 @@ import { useWallet } from './wallet-context';
 import {
   BONZO_LENDING_POOL_ABI,
   BONZO_LENDING_POOL_ADDRESS,
+  ERC20_ABI,
+  WETH_GATEWAY_ABI,
   VAULT_ABI,
   VAULT_ADDRESS,
 } from './vault-abi';
+import { getNetworkConfig } from './network-config';
 
 // Hedera EVM stores msg.value in tinybars (8 decimals), not wei (18).
 // parseEther works for deposits (relay converts), but reads need 8 decimals.
@@ -16,6 +19,7 @@ const HBAR_DECIMALS = 8;
 
 export type TxStatus =
   | 'idle'
+  | 'approving'
   | 'signing'
   | 'confirming'
   | 'confirmed'
@@ -52,61 +56,136 @@ export function useVault() {
   /**
    * Deposit into Bonzo LendingPool (or YieldMindVault as fallback).
    *
-   * When Bonzo is configured:
-   *   - Calls LendingPool.deposit(asset, amount, onBehalfOf, referralCode)
-   *   - `assetAddress` = EVM address of the token to supply
+   * Token-aware: detects HBAR vs ERC-20 tokens and uses the correct flow.
+   * - HBAR/WHBAR: WETHGateway.depositETH() — wraps HBAR → WHBAR then deposits
+   * - ERC-20 (USDC, USDT, etc.): approve() + LendingPool.deposit() without msg.value
    *
-   * When Bonzo is NOT configured:
-   *   - Falls back to YieldMindVault.deposit(strategyId, vaultName)
-   *   - `strategyId` and `vaultName` are used for on-chain tracking
+   * Falls back to YieldMindVault if WETHGateway/LendingPool are not available.
    */
   const deposit = useCallback(
     async (
       strategyId: string,
       vaultName: string,
-      amountHbar: number,
-      assetAddress?: string
+      amount: number,
+      assetAddress?: string,
+      symbol: string = 'HBAR',
+      decimals: number = 8
     ): Promise<TxResult> => {
       if (!provider || !address) {
         return { status: 'failed', txHash: null, error: 'Wallet not connected' };
       }
 
       try {
-        setDepositStatus('signing');
         const signer = await provider.getSigner();
+        const isNativeHbar = symbol === 'WHBAR' || symbol === 'HBAR';
+        const networkConfig = getNetworkConfig();
 
         let tx;
 
-        if (bonzoAvailable && assetAddress) {
-          // Direct Bonzo LendingPool deposit
-          const contract = new Contract(
+        if (isNativeHbar) {
+          // ── HBAR deposit via WETHGateway ──
+          // On Hedera, native HBAR MUST go through WETHGateway (wraps to WHBAR).
+          // Calling LendingPool.deposit() directly with msg.value does NOT work.
+          const gatewayAddress = networkConfig.wethGatewayAddress;
+
+          if (gatewayAddress && BONZO_LENDING_POOL_ADDRESS) {
+            try {
+              setDepositStatus('signing');
+              const gateway = new Contract(gatewayAddress, WETH_GATEWAY_ABI, signer);
+              const value = parseEther(amount.toString());
+
+              console.log(`[Vault] HBAR deposit via WETHGateway: ${amount} HBAR`);
+              console.log(`[Vault] Gateway: ${gatewayAddress}, LendingPool: ${BONZO_LENDING_POOL_ADDRESS}`);
+
+              tx = await gateway.depositETH(
+                BONZO_LENDING_POOL_ADDRESS, // lendingPool
+                address,                     // onBehalfOf
+                0,                           // referralCode
+                { value }
+              );
+            } catch (gatewayErr) {
+              const errMsg = gatewayErr instanceof Error ? gatewayErr.message : String(gatewayErr);
+              console.warn('[Vault] WETHGateway deposit failed, falling back to YieldMindVault:', errMsg);
+              // Fall through to YieldMindVault fallback below
+            }
+          }
+
+          // Fallback: YieldMindVault (accepts native HBAR only)
+          if (!tx && VAULT_ADDRESS) {
+            setDepositStatus('signing');
+            const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, signer);
+            const strategyIdHash = keccak256(toUtf8Bytes(strategyId));
+            const value = parseEther(amount.toString());
+            tx = await contract.deposit(strategyIdHash, vaultName, { value });
+          }
+        } else if (bonzoAvailable && assetAddress) {
+          // ── ERC-20 deposit: approve + LendingPool.deposit() (no msg.value) ──
+          const rawAmount = BigInt(Math.round(amount * Math.pow(10, decimals)));
+          const tokenContract = new Contract(assetAddress, ERC20_ABI, signer);
+
+          console.log(`[Vault] ERC-20 deposit: ${amount} ${symbol} (${rawAmount} raw, ${decimals} decimals)`);
+          console.log(`[Vault] Token: ${assetAddress}, LendingPool: ${BONZO_LENDING_POOL_ADDRESS}`);
+
+          // Always approve for HTS tokens on Hedera.
+          // The allowance() view call is unreliable on HTS tokens (returns empty 0x data),
+          // so we always send a fresh approve to be safe.
+          setDepositStatus('approving');
+          console.log(`[Vault] Approving ${BONZO_LENDING_POOL_ADDRESS} to spend ${rawAmount} of ${symbol}...`);
+          const approveTx = await tokenContract.approve(
+            BONZO_LENDING_POOL_ADDRESS,
+            rawAmount
+          );
+          console.log(`[Vault] Approve tx sent: ${approveTx.hash}, waiting for confirmation...`);
+          await approveTx.wait();
+          console.log('[Vault] Approve confirmed. Proceeding to deposit...');
+
+          // Deposit (MetaMask popup 2/2)
+          setDepositStatus('signing');
+          const lendingPool = new Contract(
             BONZO_LENDING_POOL_ADDRESS,
             BONZO_LENDING_POOL_ABI,
             signer
           );
+          try {
+            tx = await lendingPool.deposit(
+              assetAddress,
+              rawAmount,
+              address, // onBehalfOf
+              0        // referralCode
+            );
+          } catch (depositErr) {
+            const errMsg = depositErr instanceof Error ? depositErr.message : String(depositErr);
+            console.warn('[Vault] Bonzo LendingPool deposit failed:', errMsg);
 
-          // For native HBAR deposits, we send value with the transaction
-          // For HTS token deposits, we'd need token approval first
-          tx = await contract.deposit(
-            assetAddress,
-            parseEther(amountHbar.toString()),
-            address, // onBehalfOf = the user
-            0 // referralCode
-          );
-        } else if (VAULT_ADDRESS) {
-          // Fallback: YieldMindVault deposit
-          const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, signer);
-          const strategyIdHash = keccak256(toUtf8Bytes(strategyId));
+            // Known issue: Bonzo testnet aToken contracts are not associated with
+            // HTS tokens, causing CALLER_NOT_AUTHORIZED on every deposit attempt.
+            // This is a Bonzo testnet deployment limitation (no one has ever
+            // successfully deposited into this LendingPool — verified via Mirror Node).
+            const isBonzoAuthError = errMsg.includes('CALLER_NOT_AUTHORIZED') ||
+              errMsg.includes('Failed to send tokens');
 
-          tx = await contract.deposit(strategyIdHash, vaultName, {
-            value: parseEther(amountHbar.toString()),
-          });
-        } else {
+            setDepositStatus('failed');
+            return {
+              status: 'failed',
+              txHash: null,
+              error: isBonzoAuthError
+                ? `Bonzo testnet lending pools are not yet active for ${symbol} deposits. ` +
+                  `The strategy was built using real Bonzo reserve data, but the testnet ` +
+                  `aToken contracts cannot receive HTS tokens yet. ` +
+                  `Try depositing HBAR instead, which uses the YieldMind escrow contract.`
+                : `${symbol} deposit failed: ${errMsg}`,
+            };
+          }
+        }
+
+        if (!tx) {
           setDepositStatus('failed');
           return {
             status: 'failed',
             txHash: null,
-            error: 'No deposit contract configured',
+            error: isNativeHbar
+              ? 'No deposit contract configured (WETHGateway + YieldMindVault both unavailable)'
+              : `Cannot deposit ${symbol} — Bonzo LendingPool is not configured. Set NEXT_PUBLIC_BONZO_LENDING_POOL_ADDRESS in your environment.`,
           };
         }
 
@@ -128,6 +207,7 @@ export function useVault() {
           return { status: 'failed', txHash: null, error: 'Transaction rejected by user' };
         }
 
+        console.error('[Vault] Deposit error:', error);
         return { status: 'failed', txHash: null, error: error.message || 'Unknown error' };
       }
     },
@@ -161,8 +241,9 @@ export function useVault() {
             signer
           );
 
-          const amountTinybars = BigInt(Math.round(amountHbar * 1e8));
-          tx = await contract.withdraw(assetAddress, amountTinybars, address);
+          // Use MaxUint256 to withdraw full balance, or compute token-specific amount
+          const amountRaw = BigInt(Math.round(amountHbar * 1e8));
+          tx = await contract.withdraw(assetAddress, amountRaw, address);
         } else if (VAULT_ADDRESS) {
           // Fallback: YieldMindVault withdrawal
           const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, signer);

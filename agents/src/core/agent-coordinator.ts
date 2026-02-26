@@ -195,7 +195,7 @@ export class AgentCoordinator {
       ? [
           'Deposit confirmed on-chain!',
           '',
-          `**Amount:** ${confirmation.depositAmount} HBAR`,
+          `**Amount:** ${confirmation.depositAmount} ${confirmation.tokenSymbol || 'HBAR'}`,
           `**From:** ${confirmation.userAddress}`,
           `**To:** YieldMindVault contract`,
           `**Transaction:** ${hashscanUrl}`,

@@ -66,18 +66,37 @@ export function ChatInterface({
 
     const strategy = pendingStrategy;
     const amount = strategy.userIntent?.targetAmount || 100;
+    const tokenSymbol = strategy.userIntent?.tokenSymbol || 'HBAR';
     const strategyName =
       strategy.vaults.map((v) => v.vaultName).join(' + ') || 'YieldMind Strategy';
+
+    // Get token details from primary vault for token-aware deposit
+    const primaryVault = strategy.vaults[0];
+    const assetEvmAddress = primaryVault?.assetEvmAddress;
+    const vaultSymbol = primaryVault?.symbol || 'HBAR';
+    const vaultDecimals = primaryVault?.decimals || 8;
+    const isNativeHbar = vaultSymbol === 'WHBAR' || vaultSymbol === 'HBAR';
+    const depositTarget = vault.isBonzoDirect && assetEvmAddress ? 'Bonzo LendingPool' : 'YieldMindVault';
 
     addMessage({
       id: `system-signing-${Date.now()}`,
       role: 'system',
-      content: `Requesting deposit of ${amount} HBAR into YieldMindVault... Please confirm in MetaMask.`,
+      content: isNativeHbar
+        ? `Requesting deposit of ${amount} ${tokenSymbol} into ${depositTarget}... Please confirm in MetaMask.`
+        : `Requesting deposit of ${amount} ${tokenSymbol} into ${depositTarget}... This requires 2 signatures: token approval + deposit.`,
       timestamp: new Date().toISOString(),
     });
 
-    // Call the vault deposit — triggers MetaMask popup
-    const result = await vault.deposit(strategy.id, strategyName, amount);
+    // Call the vault deposit — triggers MetaMask popup(s)
+    // Pass symbol + decimals for correct token-aware flow (HBAR vs ERC-20)
+    const result = await vault.deposit(
+      strategy.id,
+      strategyName,
+      amount,
+      assetEvmAddress,
+      vaultSymbol,
+      vaultDecimals
+    );
 
     if (result.status === 'confirmed' && result.txHash) {
       addMessage({
@@ -96,6 +115,7 @@ export function ChatInterface({
             txHash: result.txHash,
             userAddress: wallet.address,
             depositAmount: amount,
+            tokenSymbol,
             sessionId,
           }),
         });
@@ -122,7 +142,7 @@ export function ChatInterface({
         addMessage({
           id: `assistant-confirmed-fallback-${Date.now()}`,
           role: 'assistant',
-          content: `Deposit confirmed on-chain!\n\n**Transaction:** ${hashscanTxUrl(result.txHash!)}\n\nYour ${amount} HBAR has been deposited into Bonzo Finance. The Sentinel agent is monitoring your position.`,
+          content: `Deposit confirmed on-chain!\n\n**Transaction:** ${hashscanTxUrl(result.txHash!)}\n\nYour ${amount} ${tokenSymbol} has been deposited into Bonzo Finance. The Sentinel agent is monitoring your position.`,
           timestamp: new Date().toISOString(),
         });
       }
@@ -328,7 +348,7 @@ function StrategyApprovalCard({
   const amount = strategy.userIntent?.targetAmount || 100;
   const tokenSymbol = strategy.userIntent?.tokenSymbol || 'HBAR';
   const hasBalance = balance ? parseFloat(balance) >= amount : false;
-  const isDepositing = depositStatus === 'signing' || depositStatus === 'confirming';
+  const isDepositing = depositStatus === 'approving' || depositStatus === 'signing' || depositStatus === 'confirming';
 
   return (
     <motion.div
@@ -355,7 +375,7 @@ function StrategyApprovalCard({
             Deposit Amount
           </span>
           <span className="text-base font-bold text-text-primary flex items-center gap-1.5">
-            <img src="/hbar.webp" alt="HBAR" className="w-5 h-5 rounded-full" />
+            <img src={tokenSymbol === 'HBAR' ? '/hbar.webp' : `/${tokenSymbol.toLowerCase()}.png`} alt={tokenSymbol} className="w-5 h-5 rounded-full" />
             {amount} {tokenSymbol}
           </span>
         </div>
@@ -402,17 +422,19 @@ function StrategyApprovalCard({
         {isDepositing && (
           <div className="flex items-center gap-2 py-2 px-3 rounded-[8px] bg-accent/10 text-sm text-accent">
             <Loader2 className="w-4 h-4 animate-spin" />
-            {depositStatus === 'signing'
-              ? 'Waiting for MetaMask signature...'
-              : 'Confirming on Hedera...'}
+            {depositStatus === 'approving'
+              ? 'Approving token spend... (1/2 signatures)'
+              : depositStatus === 'signing'
+                ? 'Waiting for deposit signature...'
+                : 'Confirming on Hedera...'}
           </div>
         )}
 
         {/* Balance warning */}
         {walletConnected && correctNetwork && !hasBalance && balance !== null && (
           <div className="text-[11px] text-borrow px-3 py-2 rounded-[8px] bg-borrow/10">
-            Insufficient balance. You have {parseFloat(balance || '0').toFixed(2)} HBAR
-            but need {amount} HBAR.
+            Insufficient balance. You have {parseFloat(balance || '0').toFixed(2)} {tokenSymbol}
+            but need {amount} {tokenSymbol}.
           </div>
         )}
 

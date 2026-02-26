@@ -13,6 +13,9 @@ import type {
 export const MOCK_VAULTS: VaultInfo[] = [
   {
     address: '0.0.1001',
+    evmAddress: '0x0000000000000000000000000000000000163B5a',
+    symbol: 'WHBAR',
+    decimals: 8,
     name: 'HBAR-USDC Stable Yield',
     tokenPair: 'HBAR/USDC',
     apy: 8.5,
@@ -24,6 +27,9 @@ export const MOCK_VAULTS: VaultInfo[] = [
   },
   {
     address: '0.0.1002',
+    evmAddress: '0x0000000000000000000000000000000000001002',
+    symbol: 'HBARX',
+    decimals: 8,
     name: 'HBAR-HBARX Growth',
     tokenPair: 'HBAR/HBARX',
     apy: 15.2,
@@ -35,6 +41,9 @@ export const MOCK_VAULTS: VaultInfo[] = [
   },
   {
     address: '0.0.1003',
+    evmAddress: '0x0000000000000000000000000000000000001003',
+    symbol: 'SAUCE',
+    decimals: 6,
     name: 'SAUCE-USDC LP',
     tokenPair: 'SAUCE/USDC',
     apy: 24.7,
@@ -46,6 +55,9 @@ export const MOCK_VAULTS: VaultInfo[] = [
   },
   {
     address: '0.0.1004',
+    evmAddress: '0x0000000000000000000000000000000000001004',
+    symbol: 'KARATE',
+    decimals: 8,
     name: 'HBAR-KARATE Momentum',
     tokenPair: 'HBAR/KARATE',
     apy: 32.1,
@@ -57,6 +69,9 @@ export const MOCK_VAULTS: VaultInfo[] = [
   },
   {
     address: '0.0.1005',
+    evmAddress: '0x0000000000000000000000000000000000001005',
+    symbol: 'USDC',
+    decimals: 6,
     name: 'USDC-USDT Safe Harbor',
     tokenPair: 'USDC/USDT',
     apy: 4.2,
@@ -154,6 +169,9 @@ export function createMockChatResponse(
 
   const strategyVaults = topVaults.slice(0, allocations.length).map((v, i) => ({
     vaultAddress: v.address,
+    assetEvmAddress: v.evmAddress,
+    symbol: v.symbol,
+    decimals: v.decimals,
     vaultName: v.name,
     allocation: allocations[i],
     expectedApy: v.apy,

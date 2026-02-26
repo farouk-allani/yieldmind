@@ -46,8 +46,9 @@ export class ExecutorAgent extends BaseAgent {
         );
 
         // Execute deposit for each vault in the strategy
+        // Use EVM address for Bonzo LendingPool, HTS address as fallback
         const result = await this.executeVaultDeposit(
-          vault.vaultAddress,
+          vault.assetEvmAddress || vault.vaultAddress,
           vault.allocation,
           strategy.userIntent.targetAmount
         );
@@ -170,9 +171,10 @@ export class ExecutorAgent extends BaseAgent {
   ): Promise<DecisionLog> {
     this.setStatus('executing', 'Confirming user deposit...');
 
+    const token = confirmation.tokenSymbol || 'HBAR';
     const reasoning = verified
       ? `User deposit confirmed on-chain. Transaction ${confirmation.txHash} from ${confirmation.userAddress} ` +
-        `for ${confirmation.depositAmount} HBAR deposited into YieldMindVault contract. ` +
+        `for ${confirmation.depositAmount} ${token} deposited into YieldMindVault contract. ` +
         `Verified via Mirror Node. Sentinel monitoring activated.`
       : `User submitted deposit transaction ${confirmation.txHash} but on-chain verification ` +
         `is still pending. The transaction may need more time to propagate to the mirror node.`;

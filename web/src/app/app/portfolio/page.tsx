@@ -608,7 +608,7 @@ export default function PortfolioPage() {
                   alt="YieldMind"
                   width={20}
                   height={20}
-                  className="h-5 w-5 opacity-70"
+                  className="h-auto w-9 "
                 />
                 <div>
                   <h3 className="text-sm font-semibold text-text-primary">

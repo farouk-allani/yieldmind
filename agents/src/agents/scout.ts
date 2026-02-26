@@ -94,20 +94,25 @@ export class ScoutAgent extends BaseAgent {
       aggressive: { conservative: 0.2, moderate: 0.6, aggressive: 1.0 },
     };
 
-    return vaults
+    // In Bonzo (Aave v2), each lending pool only accepts its own token.
+    // USDC pool only accepts USDC, KARATE pool only accepts KARATE, etc.
+    // So we MUST filter to vaults matching the user's token first.
+    const tokenUpper = tokenSymbol.toUpperCase();
+    const tokenMatched = vaults.filter(
+      (v) => v.symbol.toUpperCase() === tokenUpper
+    );
+
+    // If no exact match, fall back to all vaults (strategist will explain)
+    const candidates = tokenMatched.length > 0 ? tokenMatched : vaults;
+
+    return candidates
       .map((vault) => {
         const riskScore = riskWeights[riskTolerance][vault.riskLevel] || 0.5;
         const apyScore = Math.min(vault.apy / 10, 1); // normalize (10% = max for lending)
         const liquidityScore = Math.min(vault.tvl / 1_000_000, 1);
-        const tokenMatch = vault.tokenPair
-          .toUpperCase()
-          .includes(tokenSymbol.toUpperCase())
-          ? 1.2
-          : 0.8;
 
         const score =
-          (riskScore * 0.4 + apyScore * 0.3 + liquidityScore * 0.2) *
-          tokenMatch;
+          riskScore * 0.4 + apyScore * 0.3 + liquidityScore * 0.2;
 
         return { ...vault, score };
       })
