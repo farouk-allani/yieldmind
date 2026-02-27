@@ -3,7 +3,7 @@ import type { HCSService } from '../hedera/hcs.js';
 import type { HederaClient } from '../hedera/client.js';
 import type { DecisionLog, Strategy, ExecutionConfirmation } from '../types/index.js';
 import type { BonzoLendingPoolClient } from '../bonzo/lending-pool-client.js';
-import { getNetworkConfig, getHashscanTransactionUrl } from '../config/index.js';
+import { getBonzoNetworkConfig, getHashscanTransactionUrl } from '../config/index.js';
 
 interface ExecutorInput {
   strategy: Strategy;
@@ -217,7 +217,7 @@ export class ExecutorAgent extends BaseAgent {
         .join(', ');
 
       return (
-        `Executed ${strategy.vaults.length}-vault strategy on ${getNetworkConfig().chainName}. ` +
+        `Executed ${strategy.vaults.length}-vault strategy on ${getBonzoNetworkConfig().chainName}. ` +
         `Deposits: ${deposits}. ` +
         `All ${successful.length} transactions confirmed on-chain. ` +
         `Total allocation: ${strategy.userIntent.targetAmount} ${strategy.userIntent.tokenSymbol} at ${strategy.totalExpectedApy.toFixed(2)}% blended APY. ` +

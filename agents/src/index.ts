@@ -8,7 +8,7 @@ import { ExecutorAgent } from './agents/executor.js';
 import { SentinelAgent } from './agents/sentinel.js';
 import { AgentCoordinator } from './core/agent-coordinator.js';
 import { LLMClient } from './core/llm-client.js';
-import { getNetworkConfig } from './config/index.js';
+import { getNetworkConfig, getBonzoNetworkConfig } from './config/index.js';
 import type { UserIntent } from './types/index.js';
 
 /**
@@ -56,11 +56,13 @@ export function createRuntime() {
     sentinel,
   });
 
-  const networkConfig = getNetworkConfig();
+  const hcsConfig = getNetworkConfig();
+  const bonzoConfig = getBonzoNetworkConfig();
   console.log('YieldMind Agent Runtime initialized');
   console.log(`   Hedera Account: ${hederaClient.getAccountId()}`);
-  console.log(`   Network: ${networkConfig.chainName}`);
-  console.log(`   Bonzo LendingPool: ${bonzoLendingPool.isAvailable() ? `Connected (${networkConfig.bonzo.lendingPoolAddress})` : 'Unavailable (fallback mode)'}`);
+  console.log(`   HCS Network: ${hcsConfig.chainName} (topic creation & logging)`);
+  console.log(`   Bonzo Network: ${bonzoConfig.chainName} (data, deposits, verification)`);
+  console.log(`   Bonzo LendingPool: ${bonzoLendingPool.isAvailable() ? `Connected (${bonzoConfig.bonzo.lendingPoolAddress})` : 'Unavailable (fallback mode)'}`);
   console.log('   Agents: Scout, Strategist, Executor, Sentinel');
 
   return {

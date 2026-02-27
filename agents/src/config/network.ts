@@ -1,9 +1,14 @@
 /**
  * Centralized network configuration for YieldMind.
  *
- * All network-specific values (URLs, contract addresses, chain IDs)
- * are defined here. Switching between testnet and mainnet is controlled
- * by the HEDERA_NETWORK environment variable.
+ * SPLIT NETWORK MODE:
+ * - HCS (topic creation, message publishing) runs on HEDERA_NETWORK (testnet).
+ *   This needs a funded Hedera account. Testnet HBAR is free via faucet.
+ * - Bonzo data, deposits, and Mirror Node verification run on BONZO_NETWORK (mainnet).
+ *   These are HTTP-only calls (no account needed) or user-signed via MetaMask.
+ *
+ * This split lets us demo real mainnet Bonzo deposits with HCS transparency
+ * logging on testnet — no mainnet HBAR needed for the backend.
  */
 
 export type HederaNetwork = 'testnet' | 'mainnet';
@@ -66,12 +71,18 @@ const MAINNET_CONFIG: NetworkConfig = {
   },
 };
 
+const ALL_CONFIGS: Record<HederaNetwork, NetworkConfig> = {
+  testnet: TESTNET_CONFIG,
+  mainnet: MAINNET_CONFIG,
+};
+
 let _cachedConfig: NetworkConfig | null = null;
+let _cachedBonzoConfig: NetworkConfig | null = null;
 
 /**
- * Returns the network configuration for the current environment.
- * Reads HEDERA_NETWORK (backend) or NEXT_PUBLIC_HEDERA_NETWORK (frontend).
- * Supports env overrides for individual values.
+ * Returns the HCS / Hedera account network config.
+ * Controls: topic creation, message publishing, HBAR transfers.
+ * Reads from HEDERA_NETWORK env var (defaults to 'testnet').
  */
 export function getNetworkConfig(): NetworkConfig {
   if (_cachedConfig) return _cachedConfig;
@@ -82,7 +93,7 @@ export function getNetworkConfig(): NetworkConfig {
     'testnet'
   ) as HederaNetwork;
 
-  const base = network === 'mainnet' ? { ...MAINNET_CONFIG } : { ...TESTNET_CONFIG };
+  const base = { ...ALL_CONFIGS[network] };
 
   // Allow env overrides
   base.mirrorNodeUrl =
@@ -105,23 +116,56 @@ export function getNetworkConfig(): NetworkConfig {
   return base;
 }
 
+/**
+ * Returns the Bonzo / deposit network config.
+ * Controls: vault data fetching, LendingPool calls, Mirror Node tx verification.
+ *
+ * Reads from BONZO_NETWORK env var (defaults to 'mainnet').
+ * This is independent of HEDERA_NETWORK so that HCS can run on testnet
+ * while Bonzo data and deposits happen on mainnet.
+ */
+export function getBonzoNetworkConfig(): NetworkConfig {
+  if (_cachedBonzoConfig) return _cachedBonzoConfig;
+
+  const network = (
+    process.env.BONZO_NETWORK || 'mainnet'
+  ) as HederaNetwork;
+
+  const base = { ...ALL_CONFIGS[network] };
+
+  // Allow env overrides for Bonzo-specific values
+  base.bonzo = {
+    ...base.bonzo,
+    lendingPoolEvmAddress:
+      process.env.BONZO_LENDING_POOL_EVM_ADDRESS ||
+      base.bonzo.lendingPoolEvmAddress,
+    protocolDataProviderAddress:
+      process.env.BONZO_PROTOCOL_DATA_PROVIDER ||
+      base.bonzo.protocolDataProviderAddress,
+  };
+
+  _cachedBonzoConfig = base;
+  return base;
+}
+
 /** Reset cached config (useful for testing) */
 export function resetNetworkConfig(): void {
   _cachedConfig = null;
+  _cachedBonzoConfig = null;
 }
 
 // ---------------------------------------------------------------------------
-// URL helpers
+// URL helpers — use Bonzo network for HashScan (deposit txs are on mainnet)
 // ---------------------------------------------------------------------------
 
 export function getHashscanTransactionUrl(txId: string): string {
-  return `${getNetworkConfig().hashscanBaseUrl}/transaction/${txId}`;
+  return `${getBonzoNetworkConfig().hashscanBaseUrl}/transaction/${txId}`;
 }
 
 export function getHashscanAccountUrl(address: string): string {
-  return `${getNetworkConfig().hashscanBaseUrl}/account/${address}`;
+  return `${getBonzoNetworkConfig().hashscanBaseUrl}/account/${address}`;
 }
 
 export function getHashscanContractUrl(address: string): string {
-  return `${getNetworkConfig().hashscanBaseUrl}/contract/${address}`;
+  return `${getBonzoNetworkConfig().hashscanBaseUrl}/contract/${address}`;
 }

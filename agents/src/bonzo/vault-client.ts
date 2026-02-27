@@ -1,5 +1,5 @@
 import type { VaultInfo, RiskTolerance } from '../types/index.js';
-import { getNetworkConfig } from '../config/index.js';
+import { getBonzoNetworkConfig } from '../config/index.js';
 
 /**
  * BonzoVaultClient — Fetches REAL data from Bonzo Finance on Hedera.
@@ -100,7 +100,7 @@ export class BonzoVaultClient {
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
   constructor() {
-    const config = getNetworkConfig();
+    const config = getBonzoNetworkConfig();
     this.isTestnet = config.network === 'testnet';
     this.dataApiUrl = config.bonzo.dataApiUrl;
     this.mirrorNodeUrl = config.mirrorNodeUrl;

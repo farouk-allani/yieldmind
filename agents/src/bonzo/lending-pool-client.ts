@@ -1,4 +1,4 @@
-import { getNetworkConfig, getHashscanTransactionUrl } from '../config/index.js';
+import { getBonzoNetworkConfig, getHashscanTransactionUrl } from '../config/index.js';
 
 /**
  * BonzoLendingPoolClient — Wraps Bonzo's Aave v2 LendingPool contract.
@@ -52,7 +52,7 @@ export class BonzoLendingPoolClient {
   private readonly rpcUrl: string;
 
   constructor() {
-    const config = getNetworkConfig();
+    const config = getBonzoNetworkConfig();
     this.lendingPoolAddress = config.bonzo.lendingPoolAddress;
     this.lendingPoolEvmAddress = config.bonzo.lendingPoolEvmAddress;
     this.mirrorNodeUrl = config.mirrorNodeUrl;

@@ -1,5 +1,6 @@
 export {
   getNetworkConfig,
+  getBonzoNetworkConfig,
   resetNetworkConfig,
   getHashscanTransactionUrl,
   getHashscanAccountUrl,

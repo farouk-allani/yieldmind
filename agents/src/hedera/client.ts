@@ -7,7 +7,7 @@ import {
   AccountBalanceQuery,
 } from '@hashgraph/sdk';
 import type { TransactionResult } from '../types/index.js';
-import { getNetworkConfig, getHashscanTransactionUrl } from '../config/index.js';
+import { getNetworkConfig, getBonzoNetworkConfig, getHashscanTransactionUrl } from '../config/index.js';
 
 export class HederaClient {
   private client: Client;
@@ -99,9 +99,9 @@ export class HederaClient {
     amount: string | null;
     error: string | null;
   }> {
-    const mirrorUrl =
-      process.env.HEDERA_MIRROR_NODE_URL ||
-      getNetworkConfig().mirrorNodeUrl;
+    // Use Bonzo network's mirror node (mainnet) for verifying deposit txs,
+    // since deposits happen on mainnet even when HCS runs on testnet.
+    const mirrorUrl = getBonzoNetworkConfig().mirrorNodeUrl;
 
     try {
       const response = await fetch(
