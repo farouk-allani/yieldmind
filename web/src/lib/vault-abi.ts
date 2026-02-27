@@ -5,6 +5,8 @@
  * Strategy tracking is handled off-chain via HCS decision logs.
  */
 
+import { getNetworkConfig, getVaultAddress } from './network-config';
+
 export const BONZO_LENDING_POOL_ABI = [
   'function deposit(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external',
   'function withdraw(address asset, uint256 amount, address to) external returns (uint256)',
@@ -30,9 +32,17 @@ export const WETH_GATEWAY_ABI = [
   'function withdrawETH(address lendingPool, uint256 amount, address to) external',
 ];
 
-// Bonzo LendingPool address from env (network-specific)
-export const BONZO_LENDING_POOL_ADDRESS =
-  process.env.NEXT_PUBLIC_BONZO_LENDING_POOL_ADDRESS || '';
+// ---------------------------------------------------------------------------
+// Dynamic address getters — read from network-config at call time
+// ---------------------------------------------------------------------------
+
+/** Bonzo LendingPool address for the current network */
+export function getBonzoLendingPoolAddress(): string {
+  return getNetworkConfig().bonzoLendingPoolAddress;
+}
+
+// Re-export for convenience
+export { getVaultAddress } from './network-config';
 
 // ---------------------------------------------------------------------------
 // Legacy YieldMindVault ABI — kept for backward compatibility with portfolio
@@ -50,8 +60,3 @@ export const VAULT_ABI = [
   'event Withdrawn(address indexed user, bytes32 indexed strategyId, uint256 amount)',
   'event EmergencyWithdrawn(address indexed user, uint256 amount)',
 ];
-
-// Legacy YieldMindVault address (testnet deployment)
-export const VAULT_ADDRESS =
-  process.env.NEXT_PUBLIC_VAULT_CONTRACT_ADDRESS ||
-  '0x29d115707bEe4adAa159Fe757B7dA4ffF8cc432A';

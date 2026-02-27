@@ -6,20 +6,11 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   type ReactNode,
 } from 'react';
 import { BrowserProvider, formatEther } from 'ethers';
 import { getNetworkConfig } from './network-config';
-
-// Dynamic chain config based on NEXT_PUBLIC_HEDERA_NETWORK
-const networkConfig = getNetworkConfig();
-const HEDERA_CHAIN = {
-  chainId: networkConfig.chainIdHex,
-  chainName: networkConfig.chainName,
-  rpcUrls: [networkConfig.rpcUrl],
-  nativeCurrency: { name: 'HBAR', symbol: 'HBAR', decimals: 18 },
-  blockExplorerUrls: [networkConfig.hashscanBaseUrl],
-};
 
 interface WalletState {
   address: string | null;
@@ -62,6 +53,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [chainId, setChainId] = useState<number | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [provider, setProvider] = useState<BrowserProvider | null>(null);
+
+  // Build HEDERA_CHAIN from config at render time (reactive to network toggle)
+  const networkConfig = useMemo(() => getNetworkConfig(), []);
+  const HEDERA_CHAIN = useMemo(() => ({
+    chainId: networkConfig.chainIdHex,
+    chainName: networkConfig.chainName,
+    rpcUrls: [networkConfig.rpcUrl],
+    nativeCurrency: { name: 'HBAR', symbol: 'HBAR', decimals: 18 },
+    blockExplorerUrls: [networkConfig.hashscanBaseUrl],
+  }), [networkConfig]);
 
   const isConnected = !!address;
   const isCorrectNetwork = chainId === networkConfig.chainId;
@@ -190,7 +191,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         });
       }
     }
-  }, []);
+  }, [HEDERA_CHAIN]);
 
   // Backward compatibility alias
   const switchToHederaTestnet = switchToHedera;

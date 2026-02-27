@@ -22,12 +22,14 @@ import Image from 'next/image';
 import { useWallet } from '@/lib/wallet-context';
 import { useVault } from '@/lib/use-vault';
 import { ConnectWalletButton } from '@/components/wallet/connect-button';
-import { VAULT_ADDRESS } from '@/lib/vault-abi';
+import { NetworkToggle } from '@/components/wallet/network-toggle';
+import { getVaultAddress } from '@/lib/vault-abi';
 import { getNetworkConfig, hashscanContractUrl, hashscanAccountUrl, hashscanTxUrl } from '@/lib/network-config';
 
 export default function PortfolioPage() {
   const wallet = useWallet();
   const vault = useVault();
+  const vaultAddress = getVaultAddress();
 
   const [userTotal, setUserTotal] = useState<string>('0');
   const [tvl, setTvl] = useState<string>('0');
@@ -78,7 +80,8 @@ export default function PortfolioPage() {
   };
 
   const copyContractAddress = () => {
-    navigator.clipboard.writeText(VAULT_ADDRESS);
+    if (!vaultAddress) return;
+    navigator.clipboard.writeText(vaultAddress);
     setCopiedContract(true);
     setTimeout(() => setCopiedContract(false), 2000);
   };
@@ -137,6 +140,8 @@ export default function PortfolioPage() {
 
   if (!mounted) return null;
 
+  const isMainnet = getNetworkConfig().network === 'mainnet';
+
   return (
     <main className="min-h-screen bg-page">
       {/* Top nav */}
@@ -165,7 +170,10 @@ export default function PortfolioPage() {
               </span>
             </Link>
           </div>
-          <ConnectWalletButton />
+          <div className="flex items-center gap-3">
+            <NetworkToggle />
+            <ConnectWalletButton />
+          </div>
         </div>
       </header>
 
@@ -180,7 +188,7 @@ export default function PortfolioPage() {
           </div>
           {wallet.isConnected && (
             <div className="flex items-center gap-3">
-              {userDeposited > 0 && (
+              {userDeposited > 0 && vaultAddress && (
                 <button
                   onClick={() => setShowWithdrawModal(true)}
                   className="flex items-center gap-2 px-3 h-9 rounded-[8px] bg-borrow/10 border border-borrow/20 text-sm text-borrow font-medium hover:bg-borrow/20 transition-colors"
@@ -214,9 +222,11 @@ export default function PortfolioPage() {
                 iconColor="text-supply"
                 iconBg="bg-badge-supply"
                 label="Your Deposits"
-                value={`${userDeposited.toFixed(2)} HBAR`}
+                value={vaultAddress ? `${userDeposited.toFixed(2)} HBAR` : 'N/A'}
                 subtext={
-                  userDeposited > 0
+                  !vaultAddress
+                    ? 'Deposits go directly to Bonzo on mainnet'
+                    : userDeposited > 0
                     ? `${shareOfTvl}% of protocol TVL`
                     : 'No active deposits'
                 }
@@ -227,8 +237,8 @@ export default function PortfolioPage() {
                 iconColor="text-accent"
                 iconBg="bg-badge-accent"
                 label="Protocol TVL"
-                value={`${protocolTvl.toFixed(2)} HBAR`}
-                subtext="Total value locked in vault"
+                value={vaultAddress ? `${protocolTvl.toFixed(2)} HBAR` : 'N/A'}
+                subtext={vaultAddress ? 'Total value locked in vault' : 'Bonzo LendingPool handles TVL on mainnet'}
                 delay={0.05}
               />
               <OverviewCard
@@ -258,8 +268,8 @@ export default function PortfolioPage() {
               />
             </div>
 
-            {/* Where Are Your Funds — the key section */}
-            {userDeposited > 0 && (
+            {/* Where Are Your Funds — testnet vault section */}
+            {vaultAddress && userDeposited > 0 && (
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -276,7 +286,7 @@ export default function PortfolioPage() {
                     </p>
                   </div>
                   <a
-                    href={hashscanContractUrl(VAULT_ADDRESS)}
+                    href={hashscanContractUrl(vaultAddress)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1.5 text-[11px] text-accent hover:text-accent/80 transition-colors"
@@ -304,7 +314,7 @@ export default function PortfolioPage() {
                     <FlowStep
                       icon={<Shield className="w-4 h-4 text-supply" />}
                       title="YieldMindVault Contract"
-                      subtitle={`${VAULT_ADDRESS.slice(0, 8)}...${VAULT_ADDRESS.slice(-6)}`}
+                      subtitle={`${vaultAddress.slice(0, 8)}...${vaultAddress.slice(-6)}`}
                       detail={`${userDeposited.toFixed(2)} HBAR deposited`}
                       color="border-supply/30"
                       highlight
@@ -312,7 +322,7 @@ export default function PortfolioPage() {
 
                     <FlowArrow />
 
-                    {/* Step 3: Bonzo Strategy (future/mainnet) */}
+                    {/* Step 3: Bonzo Strategy */}
                     <FlowStep
                       icon={<img src="/bonzo.webp" alt="Bonzo" className="w-5 h-5 rounded-full" />}
                       title="Bonzo Lending Pools"
@@ -352,8 +362,55 @@ export default function PortfolioPage() {
               </motion.div>
             )}
 
-            {/* Position breakdown table */}
-            {userDeposited > 0 && (
+            {/* Mainnet: Bonzo Direct deposit flow */}
+            {isMainnet && (
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="glass-card overflow-hidden mb-8"
+              >
+                <div className="px-5 py-4 border-b border-border-subtle">
+                  <h3 className="text-sm font-semibold text-text-primary">
+                    Deposit Flow
+                  </h3>
+                  <p className="text-[11px] text-text-muted mt-0.5">
+                    On mainnet, deposits go directly into Bonzo lending pools
+                  </p>
+                </div>
+                <div className="p-5">
+                  <div className="flex flex-col lg:flex-row items-stretch gap-4">
+                    <FlowStep
+                      icon={<img src="/hbar.webp" alt="HBAR" className="w-5 h-5 rounded-full" />}
+                      title="Your Wallet"
+                      subtitle={wallet.address ? `${wallet.address.slice(0, 8)}...${wallet.address.slice(-6)}` : ''}
+                      detail={`${walletBalance.toFixed(2)} HBAR available`}
+                      color="border-accent/30"
+                    />
+                    <FlowArrow />
+                    <FlowStep
+                      icon={<img src="/bonzo.webp" alt="Bonzo" className="w-5 h-5 rounded-full" />}
+                      title="Bonzo Lending Pools"
+                      subtitle="Direct deposit via LendingPool"
+                      detail="HBAR via WETHGateway, ERC-20 via approve + deposit"
+                      color="border-supply/30"
+                      highlight
+                    />
+                    <FlowArrow />
+                    <FlowStep
+                      icon={<TrendingUp className="w-4 h-4 text-points" />}
+                      title="Earn Real Yield"
+                      subtitle="Live APY from Bonzo reserves"
+                      detail="AI agents monitor and manage your position"
+                      color="border-points/30"
+                    />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Position breakdown table — only when vault exists */}
+            {vaultAddress && userDeposited > 0 && (
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -417,12 +474,12 @@ export default function PortfolioPage() {
                         </td>
                         <td className="px-5 py-4 text-right">
                           <a
-                            href={hashscanContractUrl(VAULT_ADDRESS)}
+                            href={hashscanContractUrl(vaultAddress)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-accent hover:text-accent/80 transition-colors font-mono text-[11px]"
                           >
-                            {VAULT_ADDRESS.slice(0, 8)}...
+                            {vaultAddress.slice(0, 8)}...
                           </a>
                         </td>
                         <td className="px-5 py-4 text-right">
@@ -439,7 +496,7 @@ export default function PortfolioPage() {
             )}
 
             {/* Wallet & Contract details row */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            <div className={`grid grid-cols-1 ${vaultAddress ? 'lg:grid-cols-3' : 'lg:grid-cols-2'} gap-6 mb-8`}>
               {/* Wallet card */}
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
@@ -471,14 +528,14 @@ export default function PortfolioPage() {
                   </DetailRow>
                   <DetailRow label="Network">
                     <div className="flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-supply" />
+                      <div className={`w-1.5 h-1.5 rounded-full ${isMainnet ? 'bg-supply' : 'bg-borrow'}`} />
                       <span className="text-sm text-text-primary">
                         {getNetworkConfig().chainName}
                       </span>
                     </div>
                   </DetailRow>
                   <DetailRow label="Chain ID">
-                    <span className="text-sm text-text-primary">296</span>
+                    <span className="text-sm text-text-primary">{getNetworkConfig().chainId}</span>
                   </DetailRow>
                   <div className="pt-2">
                     <a
@@ -494,62 +551,64 @@ export default function PortfolioPage() {
                 </div>
               </motion.div>
 
-              {/* Contract card */}
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.35 }}
-                className="glass-card p-5"
-              >
-                <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-4">
-                  Vault Contract
-                </h3>
-                <div className="space-y-3">
-                  <DetailRow label="Contract">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-mono text-text-primary">
-                        {VAULT_ADDRESS.slice(0, 10)}...{VAULT_ADDRESS.slice(-8)}
+              {/* Contract card — only when vault exists (testnet) */}
+              {vaultAddress && (
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.35 }}
+                  className="glass-card p-5"
+                >
+                  <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-4">
+                    Vault Contract
+                  </h3>
+                  <div className="space-y-3">
+                    <DetailRow label="Contract">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-mono text-text-primary">
+                          {vaultAddress.slice(0, 10)}...{vaultAddress.slice(-8)}
+                        </span>
+                        <button
+                          onClick={copyContractAddress}
+                          className="p-1 rounded hover:bg-surface transition-colors"
+                        >
+                          {copiedContract ? (
+                            <Check className="w-3 h-3 text-supply" />
+                          ) : (
+                            <Copy className="w-3 h-3 text-text-muted" />
+                          )}
+                        </button>
+                      </div>
+                    </DetailRow>
+                    <DetailRow label="Type">
+                      <span className="text-sm text-text-primary">
+                        YieldMindVault
                       </span>
-                      <button
-                        onClick={copyContractAddress}
-                        className="p-1 rounded hover:bg-surface transition-colors"
+                    </DetailRow>
+                    <DetailRow label="Security">
+                      <span className="text-sm text-text-primary">
+                        ReentrancyGuard + Ownable
+                      </span>
+                    </DetailRow>
+                    <DetailRow label="Actions">
+                      <span className="text-sm text-text-primary">
+                        Deposit, Withdraw, Emergency Exit
+                      </span>
+                    </DetailRow>
+                    <div className="pt-2">
+                      <a
+                        href={hashscanContractUrl(vaultAddress)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 text-sm text-accent hover:text-accent/80 transition-colors"
                       >
-                        {copiedContract ? (
-                          <Check className="w-3 h-3 text-supply" />
-                        ) : (
-                          <Copy className="w-3 h-3 text-text-muted" />
-                        )}
-                      </button>
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        Verify contract on HashScan
+                      </a>
                     </div>
-                  </DetailRow>
-                  <DetailRow label="Type">
-                    <span className="text-sm text-text-primary">
-                      YieldMindVault
-                    </span>
-                  </DetailRow>
-                  <DetailRow label="Security">
-                    <span className="text-sm text-text-primary">
-                      ReentrancyGuard + Ownable
-                    </span>
-                  </DetailRow>
-                  <DetailRow label="Actions">
-                    <span className="text-sm text-text-primary">
-                      Deposit, Withdraw, Emergency Exit
-                    </span>
-                  </DetailRow>
-                  <div className="pt-2">
-                    <a
-                      href={hashscanContractUrl(VAULT_ADDRESS)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 text-sm text-accent hover:text-accent/80 transition-colors"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      Verify contract on HashScan
-                    </a>
                   </div>
-                </div>
-              </motion.div>
+                </motion.div>
+              )}
 
               {/* Sentinel Agent card */}
               <motion.div
@@ -639,7 +698,10 @@ export default function PortfolioPage() {
                   name="Executor"
                   color="text-borrow"
                   role="On-Chain Execution"
-                  description="Handles the deposit into YieldMindVault. Verifies transactions via Mirror Node and publishes proof to HCS."
+                  description={isMainnet
+                    ? "Handles deposits directly into Bonzo lending pools. Verifies transactions via Mirror Node and publishes proof to HCS."
+                    : "Handles the deposit into YieldMindVault. Verifies transactions via Mirror Node and publishes proof to HCS."
+                  }
                 />
                 <AgentCard
                   iconSrc="/sentinel.png"
@@ -680,7 +742,9 @@ export default function PortfolioPage() {
                     Verifiable on HashScan
                   </div>
                   <div className="text-[11px] text-text-muted mt-1">
-                    FROM: your wallet → TO: YieldMindVault
+                    {isMainnet
+                      ? 'FROM: your wallet → TO: Bonzo LendingPool'
+                      : 'FROM: your wallet → TO: YieldMindVault'}
                   </div>
                 </div>
                 <div className="px-4 py-3 rounded-[8px] bg-surface">
@@ -700,7 +764,7 @@ export default function PortfolioPage() {
                     <span className="text-[11px] text-text-muted">Bonzo Integration</span>
                   </div>
                   <div className="text-sm text-text-primary font-medium">
-                    Live Mainnet Data
+                    {isMainnet ? 'Live Mainnet Data + Direct Deposits' : 'Live Data (Testnet)'}
                   </div>
                   <div className="text-[11px] text-text-muted mt-1">
                     APY rates & risk metrics from Bonzo Finance
@@ -712,9 +776,9 @@ export default function PortfolioPage() {
         )}
       </div>
 
-      {/* Withdraw Modal */}
+      {/* Withdraw Modal — only when vault exists */}
       <AnimatePresence>
-        {showWithdrawModal && (
+        {showWithdrawModal && vaultAddress && (
           <WithdrawModal
             userDeposited={userDeposited}
             withdrawAmount={withdrawAmount}

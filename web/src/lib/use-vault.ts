@@ -5,11 +5,11 @@ import { Contract, parseEther, formatUnits, keccak256, toUtf8Bytes } from 'ether
 import { useWallet } from './wallet-context';
 import {
   BONZO_LENDING_POOL_ABI,
-  BONZO_LENDING_POOL_ADDRESS,
   ERC20_ABI,
   WETH_GATEWAY_ABI,
   VAULT_ABI,
-  VAULT_ADDRESS,
+  getBonzoLendingPoolAddress,
+  getVaultAddress,
 } from './vault-abi';
 import { getNetworkConfig } from './network-config';
 
@@ -37,21 +37,20 @@ export interface TxResult {
 /** @deprecated Use TxResult instead */
 export type DepositResult = TxResult;
 
-/**
- * Whether Bonzo LendingPool is configured for direct deposits.
- * When true, deposits go directly to Bonzo. When false, falls back to YieldMindVault.
- */
-const bonzoAvailable = !!BONZO_LENDING_POOL_ADDRESS;
-
 export function useVault() {
   const { provider, address, isConnected, isCorrectNetwork } = useWallet();
   const [depositStatus, setDepositStatus] = useState<TxStatus>('idle');
   const [withdrawStatus, setWithdrawStatus] = useState<TxStatus>('idle');
 
+  // Read addresses dynamically at render time (not module level)
+  const bonzoAddress = getBonzoLendingPoolAddress();
+  const vaultAddress = getVaultAddress();
+  const bonzoAvailable = !!bonzoAddress;
+
   const isReady =
     isConnected &&
     isCorrectNetwork &&
-    !!(bonzoAvailable ? BONZO_LENDING_POOL_ADDRESS : VAULT_ADDRESS);
+    !!(bonzoAvailable ? bonzoAddress : vaultAddress);
 
   /**
    * Deposit into Bonzo LendingPool (or YieldMindVault as fallback).
@@ -75,6 +74,10 @@ export function useVault() {
         return { status: 'failed', txHash: null, error: 'Wallet not connected' };
       }
 
+      // Snapshot addresses at call time
+      const lendingPoolAddress = getBonzoLendingPoolAddress();
+      const yieldVaultAddress = getVaultAddress();
+
       try {
         const signer = await provider.getSigner();
         const isNativeHbar = symbol === 'WHBAR' || symbol === 'HBAR';
@@ -88,19 +91,19 @@ export function useVault() {
           // Calling LendingPool.deposit() directly with msg.value does NOT work.
           const gatewayAddress = networkConfig.wethGatewayAddress;
 
-          if (gatewayAddress && BONZO_LENDING_POOL_ADDRESS) {
+          if (gatewayAddress && lendingPoolAddress) {
             try {
               setDepositStatus('signing');
               const gateway = new Contract(gatewayAddress, WETH_GATEWAY_ABI, signer);
               const value = parseEther(amount.toString());
 
               console.log(`[Vault] HBAR deposit via WETHGateway: ${amount} HBAR`);
-              console.log(`[Vault] Gateway: ${gatewayAddress}, LendingPool: ${BONZO_LENDING_POOL_ADDRESS}`);
+              console.log(`[Vault] Gateway: ${gatewayAddress}, LendingPool: ${lendingPoolAddress}`);
 
               tx = await gateway.depositETH(
-                BONZO_LENDING_POOL_ADDRESS, // lendingPool
-                address,                     // onBehalfOf
-                0,                           // referralCode
+                lendingPoolAddress, // lendingPool
+                address,            // onBehalfOf
+                0,                  // referralCode
                 { value }
               );
             } catch (gatewayErr) {
@@ -110,29 +113,29 @@ export function useVault() {
             }
           }
 
-          // Fallback: YieldMindVault (accepts native HBAR only)
-          if (!tx && VAULT_ADDRESS) {
+          // Fallback: YieldMindVault (accepts native HBAR only, testnet only)
+          if (!tx && yieldVaultAddress) {
             setDepositStatus('signing');
-            const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, signer);
+            const contract = new Contract(yieldVaultAddress, VAULT_ABI, signer);
             const strategyIdHash = keccak256(toUtf8Bytes(strategyId));
             const value = parseEther(amount.toString());
             tx = await contract.deposit(strategyIdHash, vaultName, { value });
           }
-        } else if (bonzoAvailable && assetAddress) {
+        } else if (lendingPoolAddress && assetAddress) {
           // ── ERC-20 deposit: approve + LendingPool.deposit() (no msg.value) ──
           const rawAmount = BigInt(Math.round(amount * Math.pow(10, decimals)));
           const tokenContract = new Contract(assetAddress, ERC20_ABI, signer);
 
           console.log(`[Vault] ERC-20 deposit: ${amount} ${symbol} (${rawAmount} raw, ${decimals} decimals)`);
-          console.log(`[Vault] Token: ${assetAddress}, LendingPool: ${BONZO_LENDING_POOL_ADDRESS}`);
+          console.log(`[Vault] Token: ${assetAddress}, LendingPool: ${lendingPoolAddress}`);
 
           // Always approve for HTS tokens on Hedera.
           // The allowance() view call is unreliable on HTS tokens (returns empty 0x data),
           // so we always send a fresh approve to be safe.
           setDepositStatus('approving');
-          console.log(`[Vault] Approving ${BONZO_LENDING_POOL_ADDRESS} to spend ${rawAmount} of ${symbol}...`);
+          console.log(`[Vault] Approving ${lendingPoolAddress} to spend ${rawAmount} of ${symbol}...`);
           const approveTx = await tokenContract.approve(
-            BONZO_LENDING_POOL_ADDRESS,
+            lendingPoolAddress,
             rawAmount
           );
           console.log(`[Vault] Approve tx sent: ${approveTx.hash}, waiting for confirmation...`);
@@ -142,7 +145,7 @@ export function useVault() {
           // Deposit (MetaMask popup 2/2)
           setDepositStatus('signing');
           const lendingPool = new Contract(
-            BONZO_LENDING_POOL_ADDRESS,
+            lendingPoolAddress,
             BONZO_LENDING_POOL_ABI,
             signer
           );
@@ -227,16 +230,20 @@ export function useVault() {
         return { status: 'failed', txHash: null, error: 'Wallet not connected' };
       }
 
+      // Snapshot addresses at call time
+      const lendingPoolAddress = getBonzoLendingPoolAddress();
+      const yieldVaultAddress = getVaultAddress();
+
       try {
         setWithdrawStatus('signing');
         const signer = await provider.getSigner();
 
         let tx;
 
-        if (bonzoAvailable && assetAddress) {
+        if (lendingPoolAddress && assetAddress) {
           // Direct Bonzo LendingPool withdrawal
           const contract = new Contract(
-            BONZO_LENDING_POOL_ADDRESS,
+            lendingPoolAddress,
             BONZO_LENDING_POOL_ABI,
             signer
           );
@@ -244,9 +251,9 @@ export function useVault() {
           // Use MaxUint256 to withdraw full balance, or compute token-specific amount
           const amountRaw = BigInt(Math.round(amountHbar * 1e8));
           tx = await contract.withdraw(assetAddress, amountRaw, address);
-        } else if (VAULT_ADDRESS) {
+        } else if (yieldVaultAddress) {
           // Fallback: YieldMindVault withdrawal
-          const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, signer);
+          const contract = new Contract(yieldVaultAddress, VAULT_ABI, signer);
           const strategyIdHash = keccak256(toUtf8Bytes(strategyId));
           const amountTinybars = BigInt(Math.round(amountHbar * 1e8));
           tx = await contract.withdraw(strategyIdHash, amountTinybars);
@@ -289,14 +296,15 @@ export function useVault() {
         return { status: 'failed', txHash: null, error: 'Wallet not connected' };
       }
 
-      if (!VAULT_ADDRESS) {
+      const yieldVaultAddress = getVaultAddress();
+      if (!yieldVaultAddress) {
         return { status: 'failed', txHash: null, error: 'Vault contract not configured' };
       }
 
       try {
         setWithdrawStatus('signing');
         const signer = await provider.getSigner();
-        const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, signer);
+        const contract = new Contract(yieldVaultAddress, VAULT_ABI, signer);
         const tx = await contract.emergencyWithdraw();
 
         setWithdrawStatus('confirming');
@@ -328,10 +336,11 @@ export function useVault() {
    */
   const getDeposit = useCallback(
     async (strategyId: string): Promise<string> => {
-      if (!provider || !address || !VAULT_ADDRESS) return '0';
+      const yieldVaultAddress = getVaultAddress();
+      if (!provider || !address || !yieldVaultAddress) return '0';
 
       try {
-        const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, provider);
+        const contract = new Contract(yieldVaultAddress, VAULT_ABI, provider);
         const strategyIdHash = keccak256(toUtf8Bytes(strategyId));
         const amount = await contract.getDeposit(strategyIdHash, address);
         return formatUnits(amount, HBAR_DECIMALS);
@@ -346,10 +355,11 @@ export function useVault() {
    * Read a user's total deposits across all strategies (YieldMindVault only)
    */
   const getUserTotal = useCallback(async (): Promise<string> => {
-    if (!provider || !address || !VAULT_ADDRESS) return '0';
+    const yieldVaultAddress = getVaultAddress();
+    if (!provider || !address || !yieldVaultAddress) return '0';
 
     try {
-      const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, provider);
+      const contract = new Contract(yieldVaultAddress, VAULT_ABI, provider);
       const total = await contract.userTotals(address);
       return formatUnits(total, HBAR_DECIMALS);
     } catch {
@@ -361,10 +371,11 @@ export function useVault() {
    * Read total value locked in the vault (YieldMindVault only)
    */
   const getTVL = useCallback(async (): Promise<string> => {
-    if (!provider || !VAULT_ADDRESS) return '0';
+    const yieldVaultAddress = getVaultAddress();
+    if (!provider || !yieldVaultAddress) return '0';
 
     try {
-      const contract = new Contract(VAULT_ADDRESS, VAULT_ABI, provider);
+      const contract = new Contract(yieldVaultAddress, VAULT_ABI, provider);
       const tvl = await contract.totalValueLocked();
       return formatUnits(tvl, HBAR_DECIMALS);
     } catch {

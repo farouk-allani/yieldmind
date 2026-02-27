@@ -7,8 +7,8 @@ import Image from 'next/image';
 import { ChatInterface } from '@/components/chat/chat-interface';
 import { AgentStatusPanel } from '@/components/dashboard/agent-status';
 import { DecisionLogPanel } from '@/components/dashboard/decision-log';
-import { PositionPanel } from '@/components/dashboard/position-panel';
 import { ConnectWalletButton } from '@/components/wallet/connect-button';
+import { NetworkToggle } from '@/components/wallet/network-toggle';
 import { fetchAgentStatus } from '@/lib/api';
 import type { AgentState, DecisionLog, Strategy } from '@/lib/types';
 
@@ -57,13 +57,7 @@ export default function AppPage() {
               <Database className="w-3 h-3" />
               Live Data
             </div>
-            <div className="flex items-center gap-2">
-              <img src="/hbar.webp" alt="Hedera" className="w-4 h-4 rounded-full" />
-              <span className="text-[11px] text-text-secondary">
-                Hedera Testnet
-              </span>
-              <div className="w-1.5 h-1.5 rounded-full bg-supply" />
-            </div>
+            <NetworkToggle />
             <ConnectWalletButton />
           </div>
         </div>
