@@ -2,13 +2,13 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, MessageSquare, Check, X, Loader2, Wallet } from 'lucide-react';
+import { Send, Check, X, Loader2, Wallet, ShieldCheck, ShieldAlert, Zap, TrendingUp } from 'lucide-react';
 import { MessageBubble } from './message-bubble';
 import { useWallet } from '@/lib/wallet-context';
 import { useVault } from '@/lib/use-vault';
 import { hashscanTxUrl, getNetworkConfig } from '@/lib/network-config';
 import type { ChatMessage, Strategy } from '@/lib/types';
-import { sendChatMessage } from '@/lib/api';
+import { sendChatMessage, fetchAgentStatus } from '@/lib/api';
 
 interface ChatInterfaceProps {
   onAgentUpdate?: (agentStates: ChatMessage['agentStates']) => void;
@@ -52,6 +52,25 @@ export function ChatInterface({
   useEffect(() => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
+
+  // Poll agent status every 1.5s while agents are working so the right panel
+  // reflects live state (thinking → executing → idle) in real-time.
+  useEffect(() => {
+    if (!isLoading) return;
+
+    const poll = async () => {
+      try {
+        const states = await fetchAgentStatus();
+        onAgentUpdate?.(states);
+      } catch {
+        // silent — panel will update from final chat response
+      }
+    };
+
+    poll(); // immediate first poll
+    const interval = setInterval(poll, 1500);
+    return () => clearInterval(interval);
+  }, [isLoading, onAgentUpdate]);
 
   const addMessage = useCallback((msg: ChatMessage) => {
     setMessages((prev) => [...prev, msg]);
@@ -334,6 +353,12 @@ interface StrategyApprovalCardProps {
   onSwitchNetwork: () => void;
 }
 
+const RISK_CONFIG = {
+  conservative: { label: 'Conservative', icon: ShieldCheck, color: 'text-supply', bg: 'bg-supply/10', border: 'border-supply/25' },
+  moderate:     { label: 'Moderate',     icon: ShieldAlert, color: 'text-points',  bg: 'bg-points/10',  border: 'border-points/25' },
+  aggressive:   { label: 'Aggressive',   icon: Zap,         color: 'text-borrow',  bg: 'bg-borrow/10',  border: 'border-borrow/25' },
+} as const;
+
 function StrategyApprovalCard({
   strategy,
   walletConnected,
@@ -350,132 +375,159 @@ function StrategyApprovalCard({
   const hasBalance = balance ? parseFloat(balance) >= amount : false;
   const isDepositing = depositStatus === 'approving' || depositStatus === 'signing' || depositStatus === 'confirming';
 
+  const riskKey = (strategy.overallRisk || 'moderate') as keyof typeof RISK_CONFIG;
+  const risk = RISK_CONFIG[riskKey] ?? RISK_CONFIG.moderate;
+  const RiskIcon = risk.icon;
+
+  // First vault reasoning as AI insight
+  const aiReasoning = strategy.vaults[0]?.reasoning;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="mx-1 mb-4 rounded-[8px] border border-accent/30 bg-accent/5 overflow-hidden"
+      className="mx-1 mb-4 rounded-[8px] border border-border-subtle bg-surface overflow-hidden"
     >
       {/* Header */}
-      <div className="px-4 py-3 border-b border-accent/20 bg-accent/10">
-        <div className="text-sm font-medium text-text-primary">
-          Strategy Ready for Execution
+      <div className="px-4 py-3 border-b border-border-subtle flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 mb-0.5">
+            <TrendingUp className="w-3.5 h-3.5 text-supply" />
+            <span className="text-sm font-semibold text-text-primary">
+              Strategy Proposal
+            </span>
+          </div>
+          <div className="text-[11px] text-text-muted">
+            Analyzed by Scout &amp; Strategist agents · Ready to execute
+          </div>
         </div>
-        <div className="text-[11px] text-text-muted mt-0.5">
-          Review and approve to deposit via your wallet
+        {/* Risk badge */}
+        <div className={`flex items-center gap-1.5 px-2 py-1 rounded-[6px] border text-[11px] font-medium flex-shrink-0 ${risk.color} ${risk.bg} ${risk.border}`}>
+          <RiskIcon className="w-3 h-3" />
+          {risk.label}
         </div>
       </div>
 
-      {/* Details */}
-      <div className="p-4 space-y-3">
-        {/* Amount */}
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] text-text-muted uppercase tracking-wide">
-            Deposit Amount
-          </span>
-          <span className="text-base font-bold text-text-primary flex items-center gap-1.5">
-            <img src={tokenSymbol === 'HBAR' ? '/hbar.webp' : `/${tokenSymbol.toLowerCase()}.png`} alt={tokenSymbol} className="w-5 h-5 rounded-full" />
+      {/* APY hero */}
+      <div className="px-4 pt-4 pb-3 flex items-center justify-between">
+        <div>
+          <div className="text-[11px] text-text-muted uppercase tracking-wide mb-1">
+            Deposit
+          </div>
+          <div className="flex items-center gap-2 text-xl font-bold text-text-primary">
+            <img
+              src={tokenSymbol === 'HBAR' ? '/hbar.webp' : `/${tokenSymbol.toLowerCase()}.png`}
+              alt={tokenSymbol}
+              className="w-6 h-6 rounded-full"
+            />
             {amount} {tokenSymbol}
-          </span>
+          </div>
         </div>
+        <div className="text-right">
+          <div className="text-[11px] text-text-muted uppercase tracking-wide mb-1">
+            Expected APY
+          </div>
+          <div className="text-2xl font-bold text-supply">
+            {strategy.totalExpectedApy.toFixed(1)}%
+          </div>
+        </div>
+      </div>
 
-        {/* Vault allocations */}
-        <div className="space-y-2">
-          {strategy.vaults.map((v, i) => (
-            <div
-              key={i}
-              className="flex items-center justify-between py-1.5 px-3 rounded-[8px] bg-surface"
-            >
-              <div className="flex items-center gap-2.5">
-                <img src="/bonzo.webp" alt="Bonzo" className="w-6 h-6 rounded-full flex-shrink-0" />
-                <div>
-                  <div className="text-sm text-text-primary">{v.vaultName}</div>
-                  <div className="text-[11px] text-text-muted">
-                    {v.riskLevel} risk
-                  </div>
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-sm font-medium text-text-primary">
-                  {v.allocation}%
-                </div>
-                <div className="text-[11px] text-supply">
-                  ~{v.expectedApy.toFixed(1)}% APY
-                </div>
+      {/* Vault allocations */}
+      <div className="px-4 pb-3 space-y-1.5">
+        {strategy.vaults.map((v, i) => (
+          <div
+            key={i}
+            className="flex items-center justify-between py-2 px-3 rounded-[8px] bg-[rgba(255,255,255,0.03)] border border-border-subtle"
+          >
+            <div className="flex items-center gap-2.5">
+              <img src="/bonzo.webp" alt="Bonzo" className="w-5 h-5 rounded-full flex-shrink-0" />
+              <div>
+                <div className="text-[13px] font-medium text-text-primary leading-tight">{v.vaultName}</div>
+                <div className="text-[11px] text-text-muted">{v.symbol} · Bonzo Finance</div>
               </div>
             </div>
-          ))}
-        </div>
-
-        {/* Expected APY */}
-        <div className="flex items-center justify-between pt-2 border-t border-border-subtle">
-          <span className="text-[11px] text-text-muted uppercase tracking-wide">
-            Blended APY
-          </span>
-          <span className="text-sm font-bold text-supply">
-            ~{strategy.totalExpectedApy.toFixed(1)}%
-          </span>
-        </div>
-
-        {/* Deposit status */}
-        {isDepositing && (
-          <div className="flex items-center gap-2 py-2 px-3 rounded-[8px] bg-accent/10 text-sm text-accent">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            {depositStatus === 'approving'
-              ? 'Approving token spend... (1/2 signatures)'
-              : depositStatus === 'signing'
-                ? 'Waiting for deposit signature...'
-                : 'Confirming on Hedera...'}
+            <div className="text-right flex-shrink-0">
+              <div className="text-[13px] font-semibold text-text-primary">{v.allocation}%</div>
+              <div className="text-[11px] text-supply">{v.expectedApy.toFixed(1)}% APY</div>
+            </div>
           </div>
-        )}
+        ))}
+      </div>
 
-        {/* Balance warning */}
-        {walletConnected && correctNetwork && !hasBalance && balance !== null && (
-          <div className="text-[11px] text-borrow px-3 py-2 rounded-[8px] bg-borrow/10">
-            Insufficient balance. You have {parseFloat(balance || '0').toFixed(2)} {tokenSymbol}
-            but need {amount} {tokenSymbol}.
+      {/* AI reasoning excerpt */}
+      {aiReasoning && (
+        <div className="mx-4 mb-3 px-3 py-2.5 rounded-[8px] bg-[rgba(255,255,255,0.02)] border border-border-subtle">
+          <div className="text-[10px] text-text-muted uppercase tracking-wide mb-1.5">
+            AI Reasoning
           </div>
-        )}
+          <p className="text-[12px] text-text-muted leading-relaxed line-clamp-2">
+            {aiReasoning}
+          </p>
+        </div>
+      )}
 
-        {/* Action buttons */}
-        <div className="flex gap-2 pt-1">
-          {!walletConnected ? (
+      {/* Deposit status */}
+      {isDepositing && (
+        <div className="mx-4 mb-3 flex items-center gap-2 py-2 px-3 rounded-[8px] bg-accent/10 text-[13px] text-accent border border-accent/20">
+          <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
+          {depositStatus === 'approving'
+            ? 'Approving token spend… (1 of 2 signatures)'
+            : depositStatus === 'signing'
+              ? 'Waiting for deposit signature…'
+              : 'Confirming on Hedera…'}
+        </div>
+      )}
+
+      {/* Balance warning */}
+      {walletConnected && correctNetwork && !hasBalance && balance !== null && (
+        <div className="mx-4 mb-3 text-[11px] text-borrow px-3 py-2 rounded-[8px] bg-borrow/10 border border-borrow/20">
+          Insufficient balance — you have {parseFloat(balance || '0').toFixed(2)} {tokenSymbol}, need {amount} {tokenSymbol}.
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div className="px-4 pb-4 flex gap-2">
+        {!walletConnected ? (
+          <button
+            onClick={onConnect}
+            className="flex-1 flex items-center justify-center gap-2 h-10 rounded-[8px] bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors"
+          >
+            <Wallet className="w-4 h-4" />
+            Connect Wallet to Deposit
+          </button>
+        ) : !correctNetwork ? (
+          <button
+            onClick={onSwitchNetwork}
+            className="flex-1 flex items-center justify-center gap-2 h-10 rounded-[8px] bg-borrow/20 text-borrow text-sm font-medium hover:bg-borrow/30 transition-colors"
+          >
+            Switch to {getNetworkConfig().chainName}
+          </button>
+        ) : (
+          <>
             <button
-              onClick={onConnect}
-              className="flex-1 flex items-center justify-center gap-2 h-10 rounded-[8px] bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors"
+              onClick={onApprove}
+              disabled={isDepositing || !hasBalance}
+              className="flex-1 flex items-center justify-center gap-2 h-10 rounded-[8px] bg-supply text-white text-sm font-medium hover:bg-supply/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Wallet className="w-4 h-4" />
-              Connect Wallet to Deposit
-            </button>
-          ) : !correctNetwork ? (
-            <button
-              onClick={onSwitchNetwork}
-              className="flex-1 flex items-center justify-center gap-2 h-10 rounded-[8px] bg-borrow/20 text-borrow text-sm font-medium hover:bg-borrow/30 transition-colors"
-            >
-              Switch to {getNetworkConfig().chainName}
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={onApprove}
-                disabled={isDepositing || !hasBalance}
-                className="flex-1 flex items-center justify-center gap-2 h-10 rounded-[8px] bg-supply text-white text-sm font-medium hover:bg-supply/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
+              {isDepositing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
                 <Check className="w-4 h-4" />
-                {isDepositing ? 'Processing...' : 'Approve & Deposit'}
-              </button>
-              <button
-                onClick={onReject}
-                disabled={isDepositing}
-                className="flex items-center justify-center gap-2 h-10 px-4 rounded-[8px] border border-border-subtle text-text-muted text-sm hover:bg-surface transition-colors disabled:opacity-40"
-              >
-                <X className="w-4 h-4" />
-                Reject
-              </button>
-            </>
-          )}
-        </div>
+              )}
+              {isDepositing ? 'Processing…' : 'Approve & Deposit'}
+            </button>
+            <button
+              onClick={onReject}
+              disabled={isDepositing}
+              className="flex items-center justify-center gap-2 h-10 px-4 rounded-[8px] border border-border-subtle text-text-muted text-sm hover:bg-[rgba(255,255,255,0.04)] transition-colors disabled:opacity-40"
+            >
+              <X className="w-4 h-4" />
+              Reject
+            </button>
+          </>
+        )}
       </div>
     </motion.div>
   );
