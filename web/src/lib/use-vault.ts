@@ -74,6 +74,23 @@ export function useVault() {
         return { status: 'failed', txHash: null, error: 'Wallet not connected' };
       }
 
+      // Hard network check — prevent deposits on wrong chain.
+      // This catches cases where MetaMask is on testnet but UI expects mainnet.
+      const expectedConfig = getNetworkConfig();
+      try {
+        const walletNetwork = await provider.getNetwork();
+        const walletChainId = Number(walletNetwork.chainId);
+        if (walletChainId !== expectedConfig.chainId) {
+          return {
+            status: 'failed',
+            txHash: null,
+            error: `Wrong network: your wallet is on chain ${walletChainId} but ${expectedConfig.chainName} (${expectedConfig.chainId}) is required. Please switch networks in MetaMask.`,
+          };
+        }
+      } catch {
+        // If we can't check, proceed cautiously
+      }
+
       // Snapshot addresses at call time
       const lendingPoolAddress = getBonzoLendingPoolAddress();
       const yieldVaultAddress = getVaultAddress();

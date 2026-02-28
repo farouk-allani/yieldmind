@@ -1,6 +1,7 @@
 import { BaseAgent } from '../core/base-agent.js';
 import type { HCSService } from '../hedera/hcs.js';
 import type { BonzoVaultClient } from '../bonzo/vault-client.js';
+import { normalizeTokenSymbol } from '../bonzo/vault-client.js';
 import type { DecisionLog, VaultInfo, RiskTolerance } from '../types/index.js';
 
 interface ScoutInput {
@@ -96,10 +97,10 @@ export class ScoutAgent extends BaseAgent {
 
     // In Bonzo (Aave v2), each lending pool only accepts its own token.
     // USDC pool only accepts USDC, KARATE pool only accepts KARATE, etc.
-    // So we MUST filter to vaults matching the user's token first.
-    const tokenUpper = tokenSymbol.toUpperCase();
+    // HBAR → WHBAR: Bonzo wraps native HBAR to WHBAR for lending.
+    const normalizedSymbol = normalizeTokenSymbol(tokenSymbol);
     const tokenMatched = vaults.filter(
-      (v) => v.symbol.toUpperCase() === tokenUpper
+      (v) => v.symbol.toUpperCase() === normalizedSymbol
     );
 
     // If no exact match, fall back to all vaults (strategist will explain)

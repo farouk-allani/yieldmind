@@ -5,54 +5,84 @@ import { getBonzoNetworkConfig } from '../config/index.js';
  * BonzoVaultClient — Fetches REAL data from Bonzo Finance on Hedera.
  *
  * Data flow:
- * - Mainnet: Bonzo Data API → reserve metadata, then Mirror Node for live APY
- * - Testnet: Hardcoded reserve list (testnet data API is unavailable),
- *            then Mirror Node for live APY via ProtocolDataProvider
+ * - Mainnet: Bonzo Data API /market → supply_apy and available_liquidity directly
+ *   (no Mirror Node contract calls, no CoinGecko price fetching needed)
+ * - Testnet: Hardcoded reserve list with fallback APY values
+ *   (testnet data API is unavailable)
  *
- * Always reads from the CURRENT network (testnet or mainnet) so that
- * EVM addresses match the chain the user's wallet is connected to.
+ * WHBAR mapping: When users say "HBAR", Bonzo wraps it to WHBAR for lending.
+ * The client maps HBAR intent → WHBAR pool automatically.
  */
+
+// ── WHBAR ↔ HBAR mapping ───────────────────────────────────────────
+// Bonzo uses WHBAR (Wrapped HBAR) for lending pools. Users say "HBAR"
+// but the actual pool asset is WHBAR. This mapping lets the Scout and
+// Strategist seamlessly translate between user intent and pool reality.
+export const WHBAR_EVM_ADDRESS: Record<string, string> = {
+  testnet: '', // no WHBAR pool on testnet
+  mainnet: '0x0000000000000000000000000000000000163b5a',
+};
+
+/**
+ * Normalize token symbol for vault lookups.
+ * "HBAR" → "WHBAR" (since Bonzo uses wrapped HBAR)
+ */
+export function normalizeTokenSymbol(symbol: string): string {
+  return symbol.toUpperCase() === 'HBAR' ? 'WHBAR' : symbol.toUpperCase();
+}
 
 // ── Testnet reserve definitions ──────────────────────────────────────
 // Source: https://docs.bonzo.finance/hub/developer/bonzo-lend/lend-contracts
 // The testnet data API (testnet-data.bonzo.finance) returns 403,
 // so we hardcode the known testnet reserves.
-const TESTNET_RESERVES: BonzoReserve[] = [
+interface TestnetReserve {
+  id: number;
+  name: string;
+  symbol: string;
+  evm_address: string;
+  hts_address: string;
+  decimals: number;
+  ltv: number;
+  active: boolean;
+  frozen: boolean;
+}
+
+const TESTNET_RESERVES: TestnetReserve[] = [
   {
-    id: 0, name: 'USD Coin', symbol: 'USDC', coingecko_id: 'usd-coin',
+    id: 0, name: 'USD Coin', symbol: 'USDC',
     evm_address: '0x0000000000000000000000000000000000001549',
-    hts_address: '0.0.5449', decimals: 6, ltv: 0.80, liquidation_threshold: 0.83,
-    active: true, frozen: false, variable_borrowing_enabled: true, reserve_factor: 0.1,
+    hts_address: '0.0.5449', decimals: 6, ltv: 0.80,
+    active: true, frozen: false,
   },
   {
-    id: 1, name: 'Sauce', symbol: 'SAUCE', coingecko_id: 'saucerswap',
+    id: 1, name: 'Sauce', symbol: 'SAUCE',
     evm_address: '0x0000000000000000000000000000000000120f46',
-    hts_address: '0.0.1183558', decimals: 6, ltv: 0.40, liquidation_threshold: 0.68,
-    active: true, frozen: false, variable_borrowing_enabled: true, reserve_factor: 0.1,
+    hts_address: '0.0.1183558', decimals: 6, ltv: 0.40,
+    active: true, frozen: false,
   },
   {
-    id: 2, name: 'Karate Combat', symbol: 'KARATE', coingecko_id: 'karate-combat',
+    id: 2, name: 'Karate Combat', symbol: 'KARATE',
     evm_address: '0x00000000000000000000000000000000003991ed',
-    hts_address: '0.0.3772909', decimals: 8, ltv: 0.20, liquidation_threshold: 0.65,
-    active: true, frozen: false, variable_borrowing_enabled: true, reserve_factor: 0.1,
+    hts_address: '0.0.3772909', decimals: 8, ltv: 0.20,
+    active: true, frozen: false,
   },
   {
-    id: 3, name: 'xSAUCE', symbol: 'XSAUCE', coingecko_id: 'xsauce',
+    id: 3, name: 'xSAUCE', symbol: 'XSAUCE',
     evm_address: '0x000000000000000000000000000000000015a59b',
-    hts_address: '0.0.1418651', decimals: 6, ltv: 0.40, liquidation_threshold: 0.67,
-    active: true, frozen: false, variable_borrowing_enabled: true, reserve_factor: 0.1,
+    hts_address: '0.0.1418651', decimals: 6, ltv: 0.40,
+    active: true, frozen: false,
   },
   {
-    id: 4, name: 'HBARX', symbol: 'HBARX', coingecko_id: 'hbarx',
+    id: 4, name: 'HBARX', symbol: 'HBARX',
     evm_address: '0x0000000000000000000000000000000000220ced',
-    hts_address: '0.0.2231533', decimals: 8, ltv: 0.62, liquidation_threshold: 0.68,
-    active: true, frozen: false, variable_borrowing_enabled: true, reserve_factor: 0.1,
+    hts_address: '0.0.2231533', decimals: 8, ltv: 0.62,
+    active: true, frozen: false,
   },
 ];
 
 // Fallback APY values for testnet reserves.
 // Testnet pools have little to no real supply activity so on-chain rates return 0%.
-// These are based on typical Bonzo mainnet rates to provide a realistic demo experience.
+// These are based on typical Bonzo mainnet rates for a realistic demo experience.
 const TESTNET_FALLBACK_APYS: Record<string, { supplyApy: number; tvlUsd: number }> = {
   USDC:   { supplyApy: 3.45, tvlUsd: 850_000 },
   SAUCE:  { supplyApy: 5.82, tvlUsd: 320_000 },
@@ -61,39 +91,60 @@ const TESTNET_FALLBACK_APYS: Record<string, { supplyApy: number; tvlUsd: number 
   HBARX:  { supplyApy: 4.25, tvlUsd: 540_000 },
 };
 
-interface BonzoReserve {
+// ── Bonzo Data API response types ───────────────────────────────────
+// Source: https://mainnet-data-staging.bonzo.finance/market
+
+interface BonzoPriceData {
+  tiny_token: string;
+  token_display: string;
+  hbar_tinybar: string;
+  hbar_display: string;
+  usd_wad: string;
+  usd_display: string;
+  usd_abbreviated: string;
+}
+
+interface BonzoMarketReserve {
   id: number;
   name: string;
   symbol: string;
-  coingecko_id: string;
+  coingecko_id: string | null;
   evm_address: string;
   hts_address: string;
+  atoken_address: string;
+  stable_debt_address: string;
+  variable_debt_address: string;
   decimals: number;
   ltv: number;
   liquidation_threshold: number;
+  liquidation_bonus: number;
   active: boolean;
   frozen: boolean;
   variable_borrowing_enabled: boolean;
+  stable_borrowing_enabled: boolean;
   reserve_factor: number;
+  available_liquidity: BonzoPriceData;
+  total_supply: BonzoPriceData;
+  utilization_rate: number;
+  /** Supply APY as a percentage (e.g., 1.03 = 1.03%) */
+  supply_apy: number;
+  variable_borrow_apy: number;
+  stable_borrow_apy: number;
+  price_usd_display: string;
 }
 
-interface BonzoDataResponse {
+interface BonzoMarketResponse {
   chain_id: number;
   network_name: string;
-  reserves: BonzoReserve[];
+  total_market_supplied: BonzoPriceData;
+  total_market_borrowed: BonzoPriceData;
+  total_market_liquidity: BonzoPriceData;
+  reserves: BonzoMarketReserve[];
   timestamp: string;
-}
-
-interface ReserveRates {
-  supplyApy: number;
-  borrowApy: number;
-  availableLiquidity: number;
 }
 
 export class BonzoVaultClient {
   private readonly dataApiUrl: string;
-  private readonly mirrorNodeUrl: string;
-  private readonly protocolDataProvider: string;
   private readonly isTestnet: boolean;
   private cachedVaults: VaultInfo[] | null = null;
   private cacheExpiry = 0;
@@ -103,12 +154,15 @@ export class BonzoVaultClient {
     const config = getBonzoNetworkConfig();
     this.isTestnet = config.network === 'testnet';
     this.dataApiUrl = config.bonzo.dataApiUrl;
-    this.mirrorNodeUrl = config.mirrorNodeUrl;
-    this.protocolDataProvider = config.bonzo.protocolDataProviderAddress;
   }
 
   /**
-   * Fetch all Bonzo lending reserves with live on-chain data.
+   * Fetch all Bonzo lending reserves with live data.
+   *
+   * On mainnet: hits the Bonzo Data API /market endpoint which returns
+   * supply_apy and available_liquidity directly — no contract calls needed.
+   *
+   * On testnet: uses hardcoded reserves with fallback APYs.
    */
   async getVaults(): Promise<VaultInfo[]> {
     if (this.cachedVaults && Date.now() < this.cacheExpiry) {
@@ -117,108 +171,12 @@ export class BonzoVaultClient {
     }
 
     try {
-      // Step 1: Get reserve metadata
-      // Testnet: use hardcoded reserves (testnet data API is unavailable)
-      // Mainnet: fetch from Bonzo Data API
-      let activeReserves: BonzoReserve[];
-
-      if (this.isTestnet) {
-        activeReserves = TESTNET_RESERVES.filter((r) => r.active && !r.frozen);
-        console.log(
-          `[BonzoClient] Using ${activeReserves.length} hardcoded testnet reserves`
-        );
-      } else {
-        const response = await fetch(this.dataApiUrl);
-        if (!response.ok) {
-          throw new Error(`Bonzo API returned ${response.status}`);
-        }
-        const data = (await response.json()) as BonzoDataResponse;
-        console.log(
-          `[BonzoClient] Fetched ${data.reserves.length} reserves from Bonzo (${data.network_name})`
-        );
-        activeReserves = data.reserves.filter((r) => r.active && !r.frozen);
-      }
-
-      // Step 2: Fetch USD prices from CoinGecko
-      const cgIds = activeReserves
-        .map((r) => r.coingecko_id)
-        .filter(Boolean)
-        .join(',');
-      const prices = await this.fetchPrices(cgIds);
-
-      // Step 3: Fetch on-chain APY rates for each reserve
-      const vaults: VaultInfo[] = [];
-      for (const reserve of activeReserves) {
-        try {
-          const rates = await this.getReserveRates(
-            reserve.evm_address,
-            reserve.decimals
-          );
-          const price = prices[reserve.coingecko_id] || 0;
-          let tvlUsd = rates.availableLiquidity * price;
-          let supplyApy = rates.supplyApy;
-
-          // On testnet, pools often have 0 activity → 0% APY.
-          // Use fallback values for a realistic demo experience.
-          if (this.isTestnet && supplyApy === 0) {
-            const fallback = TESTNET_FALLBACK_APYS[reserve.symbol];
-            if (fallback) {
-              supplyApy = fallback.supplyApy;
-              if (tvlUsd === 0) tvlUsd = fallback.tvlUsd;
-              console.log(
-                `[BonzoClient] Using fallback APY for ${reserve.symbol}: ${supplyApy}%`
-              );
-            }
-          }
-
-          vaults.push({
-            address: reserve.hts_address,
-            evmAddress: reserve.evm_address,
-            symbol: reserve.symbol,
-            decimals: reserve.decimals,
-            name: `${reserve.symbol} Supply Pool`,
-            tokenPair: `${reserve.symbol}/USD`,
-            apy: supplyApy,
-            tvl: tvlUsd,
-            riskLevel: this.assessRisk(reserve.ltv),
-            liquidityDepth: rates.availableLiquidity,
-            lastHarvest: new Date().toISOString(),
-            rewardToken: reserve.symbol,
-          });
-        } catch (error) {
-          console.log(
-            `[BonzoClient] Failed to get rates for ${reserve.symbol}:`,
-            error instanceof Error ? error.message : error
-          );
-
-          // Even if on-chain call fails entirely, include testnet reserves with fallback data
-          if (this.isTestnet) {
-            const fallback = TESTNET_FALLBACK_APYS[reserve.symbol];
-            if (fallback) {
-              vaults.push({
-                address: reserve.hts_address,
-                evmAddress: reserve.evm_address,
-                symbol: reserve.symbol,
-                decimals: reserve.decimals,
-                name: `${reserve.symbol} Supply Pool`,
-                tokenPair: `${reserve.symbol}/USD`,
-                apy: fallback.supplyApy,
-                tvl: fallback.tvlUsd,
-                riskLevel: this.assessRisk(reserve.ltv),
-                liquidityDepth: 0,
-                lastHarvest: new Date().toISOString(),
-                rewardToken: reserve.symbol,
-              });
-              console.log(
-                `[BonzoClient] Using full fallback for ${reserve.symbol} (on-chain call failed)`
-              );
-            }
-          }
-        }
-      }
+      const vaults = this.isTestnet
+        ? this.buildTestnetVaults()
+        : await this.fetchMainnetVaults();
 
       console.log(
-        `[BonzoClient] Built ${vaults.length} real vault entries with live APY`
+        `[BonzoClient] Built ${vaults.length} vault entries with ${this.isTestnet ? 'fallback' : 'live'} APY data`
       );
 
       this.cachedVaults = vaults;
@@ -226,7 +184,7 @@ export class BonzoVaultClient {
       return vaults;
     } catch (error) {
       console.error(
-        '[BonzoClient] Failed to fetch real data:',
+        '[BonzoClient] Failed to fetch vault data:',
         error instanceof Error ? error.message : error
       );
       return this.cachedVaults || [];
@@ -234,94 +192,90 @@ export class BonzoVaultClient {
   }
 
   /**
-   * Read live supply/borrow APY from Bonzo's on-chain contracts
-   * via Hedera Mirror Node contract call.
-   *
-   * Calls getReserveData(address) on the Protocol Data Provider.
-   * Returns decoded rates in RAY format (1e27).
+   * Fetch live vault data from Bonzo Data API /market endpoint.
+   * Returns supply_apy and available_liquidity.usd_display directly.
+   * No Mirror Node contract calls or CoinGecko needed.
    */
-  private async getReserveRates(
-    tokenEvmAddress: string,
-    decimals: number
-  ): Promise<ReserveRates> {
-    const paddedAddress = tokenEvmAddress
-      .replace('0x', '')
-      .padStart(64, '0');
-    const callData = `0x35ea6a75${paddedAddress}`;
+  private async fetchMainnetVaults(): Promise<VaultInfo[]> {
+    const url = `${this.dataApiUrl}/market`;
+    console.log(`[BonzoClient] Fetching live data from ${url}`);
 
-    const response = await fetch(`${this.mirrorNodeUrl}/api/v1/contracts/call`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        data: callData,
-        to: this.protocolDataProvider,
-        estimate: false,
-      }),
-    });
-
+    const response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`Mirror Node contract call failed: ${response.status}`);
+      throw new Error(`Bonzo Data API returned ${response.status}`);
     }
 
-    const result = (await response.json()) as { result: string };
-    return this.decodeReserveData(result.result, decimals);
+    const data = (await response.json()) as BonzoMarketResponse;
+    console.log(
+      `[BonzoClient] Fetched ${data.reserves.length} reserves from Bonzo (${data.network_name})`
+    );
+
+    const activeReserves = data.reserves.filter((r) => r.active && !r.frozen);
+    const vaults: VaultInfo[] = [];
+
+    for (const reserve of activeReserves) {
+      // Parse TVL from usd_display (e.g., "7,070,756.90" → 7070756.90)
+      const tvlUsd = this.parseUsdDisplay(reserve.available_liquidity.usd_display);
+
+      // Parse liquidity in token units
+      const liquidityDepth = parseFloat(reserve.available_liquidity.token_display) || 0;
+
+      vaults.push({
+        address: reserve.hts_address,
+        evmAddress: reserve.evm_address,
+        symbol: reserve.symbol,
+        decimals: reserve.decimals,
+        name: `${reserve.symbol} Supply Pool`,
+        tokenPair: `${reserve.symbol}/USD`,
+        apy: reserve.supply_apy, // Already a percentage from the API
+        tvl: tvlUsd,
+        riskLevel: this.assessRisk(reserve.ltv),
+        liquidityDepth,
+        lastHarvest: data.timestamp,
+        rewardToken: reserve.symbol,
+      });
+    }
+
+    return vaults;
   }
 
   /**
-   * Decode the ABI-encoded response from getReserveData().
-   *
-   * Fields (each 32 bytes / 64 hex chars):
-   * [0] availableLiquidity
-   * [1] totalStableDebt
-   * [2] totalVariableDebt
-   * [3] liquidityRate (supply APY in RAY = 1e27)
-   * [4] variableBorrowRate (borrow APY in RAY)
+   * Build testnet vault data from hardcoded reserves + fallback APYs.
    */
-  private decodeReserveData(hex: string, decimals: number): ReserveRates {
-    const clean = hex.replace('0x', '');
-    const chunks: string[] = [];
-    for (let i = 0; i < clean.length; i += 64) {
-      chunks.push(clean.slice(i, i + 64));
-    }
+  private buildTestnetVaults(): VaultInfo[] {
+    const activeReserves = TESTNET_RESERVES.filter((r) => r.active && !r.frozen);
+    console.log(
+      `[BonzoClient] Using ${activeReserves.length} hardcoded testnet reserves`
+    );
 
-    const rawLiquidity = BigInt('0x' + (chunks[0] || '0'));
-    const liquidityRate = BigInt('0x' + (chunks[3] || '0'));
-    const variableBorrowRate = BigInt('0x' + (chunks[4] || '0'));
-
-    const RAY = BigInt('1000000000000000000000000000'); // 1e27
-    const MULTIPLIER = BigInt(10000);
-    const supplyApy = Number((liquidityRate * MULTIPLIER) / RAY) / 100;
-    const borrowApy = Number((variableBorrowRate * MULTIPLIER) / RAY) / 100;
-    const availableLiquidity =
-      Number(rawLiquidity) / Math.pow(10, decimals);
-
-    return { supplyApy, borrowApy, availableLiquidity };
+    return activeReserves.map((reserve) => {
+      const fallback = TESTNET_FALLBACK_APYS[reserve.symbol];
+      return {
+        address: reserve.hts_address,
+        evmAddress: reserve.evm_address,
+        symbol: reserve.symbol,
+        decimals: reserve.decimals,
+        name: `${reserve.symbol} Supply Pool`,
+        tokenPair: `${reserve.symbol}/USD`,
+        apy: fallback?.supplyApy || 0,
+        tvl: fallback?.tvlUsd || 0,
+        riskLevel: this.assessRisk(reserve.ltv),
+        liquidityDepth: 0,
+        lastHarvest: new Date().toISOString(),
+        rewardToken: reserve.symbol,
+      };
+    });
   }
 
   /**
-   * Fetch USD prices from CoinGecko for TVL calculation.
+   * Parse Bonzo's usd_display format to number.
+   * e.g., "7,070,756.90" → 7070756.90
    */
-  private async fetchPrices(
-    cgIds: string
-  ): Promise<Record<string, number>> {
-    try {
-      const response = await fetch(
-        `https://api.coingecko.com/api/v3/simple/price?ids=${cgIds}&vs_currencies=usd`
-      );
-      if (!response.ok) return {};
-      const data = (await response.json()) as Record<
-        string,
-        { usd: number }
-      >;
-      const prices: Record<string, number> = {};
-      for (const [id, val] of Object.entries(data)) {
-        prices[id] = val.usd;
-      }
-      return prices;
-    } catch {
-      console.log('[BonzoClient] CoinGecko unavailable, TVL will show 0');
-      return {};
-    }
+  private parseUsdDisplay(display: string): number {
+    if (!display) return 0;
+    const cleaned = display.replace(/,/g, '').replace(/\$/g, '');
+    const parsed = parseFloat(cleaned);
+    return isNaN(parsed) ? 0 : parsed;
   }
 
   /**
