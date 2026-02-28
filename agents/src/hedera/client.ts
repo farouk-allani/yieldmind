@@ -7,7 +7,7 @@ import {
   AccountBalanceQuery,
 } from '@hashgraph/sdk';
 import type { TransactionResult } from '../types/index.js';
-import { getNetworkConfig, getBonzoNetworkConfig, getHashscanTransactionUrl } from '../config/index.js';
+import { getNetworkConfig } from '../config/index.js';
 
 export class HederaClient {
   private client: Client;
@@ -60,7 +60,7 @@ export class HederaClient {
       return {
         success: receipt.status.toString() === 'SUCCESS',
         transactionId: response.transactionId.toString(),
-        hashscanUrl: getHashscanTransactionUrl(response.transactionId.toString()),
+        hashscanUrl: `${getNetworkConfig().hashscanBaseUrl}/transaction/${response.transactionId.toString()}`,
         error: null,
         timestamp: new Date().toISOString(),
       };

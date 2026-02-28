@@ -105,6 +105,8 @@ export interface ExecutionConfirmation {
   tokenSymbol: string;
   sessionId: string;
   strategyId?: string;
+  /** EVM network the MetaMask tx happened on ('testnet' | 'mainnet') */
+  evmNetwork?: string;
 }
 
 export interface HCSMessage {

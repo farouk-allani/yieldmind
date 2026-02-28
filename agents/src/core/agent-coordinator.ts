@@ -9,7 +9,7 @@ import type {
 } from '../types/index.js';
 import type { HCSService } from '../hedera/hcs.js';
 import type { HederaClient } from '../hedera/client.js';
-import { getHashscanTransactionUrl } from '../config/index.js';
+import { getNetworkConfig } from '../config/index.js';
 import type { ScoutAgent } from '../agents/scout.js';
 import type { StrategistAgent } from '../agents/strategist.js';
 import type { ExecutorAgent } from '../agents/executor.js';
@@ -189,7 +189,12 @@ export class AgentCoordinator {
         });
     }
 
-    const hashscanUrl = getHashscanTransactionUrl(confirmation.txHash);
+    // Use the EVM network the MetaMask tx was signed on (testnet or mainnet).
+    // Falls back to the HCS/Hedera network if not provided.
+    const evmHashscanBase = confirmation.evmNetwork
+      ? `https://hashscan.io/${confirmation.evmNetwork}`
+      : getNetworkConfig().hashscanBaseUrl;
+    const hashscanUrl = `${evmHashscanBase}/transaction/${confirmation.txHash}`;
 
     const message = verification.verified
       ? [

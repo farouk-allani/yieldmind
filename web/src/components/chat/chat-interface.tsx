@@ -6,7 +6,7 @@ import { Send, Check, X, Loader2, Wallet, ShieldCheck, ShieldAlert, Zap, Trendin
 import { MessageBubble } from './message-bubble';
 import { useWallet } from '@/lib/wallet-context';
 import { useVault } from '@/lib/use-vault';
-import { hashscanTxUrl, getNetworkConfig } from '@/lib/network-config';
+import { hashscanTxUrl, getNetworkConfig, getCurrentNetwork } from '@/lib/network-config';
 import type { ChatMessage, Strategy } from '@/lib/types';
 import { sendChatMessage, fetchAgentStatus } from '@/lib/api';
 
@@ -53,6 +53,11 @@ export function ChatInterface({
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
+  // Keep a stable ref to the callback so the polling effect doesn't restart
+  // every time the parent re-renders with a new function reference.
+  const onAgentUpdateRef = useRef(onAgentUpdate);
+  useEffect(() => { onAgentUpdateRef.current = onAgentUpdate; }, [onAgentUpdate]);
+
   // Poll agent status every 1.5s while agents are working so the right panel
   // reflects live state (thinking → executing → idle) in real-time.
   useEffect(() => {
@@ -61,7 +66,7 @@ export function ChatInterface({
     const poll = async () => {
       try {
         const states = await fetchAgentStatus();
-        onAgentUpdate?.(states);
+        onAgentUpdateRef.current?.(states);
       } catch {
         // silent — panel will update from final chat response
       }
@@ -70,7 +75,7 @@ export function ChatInterface({
     poll(); // immediate first poll
     const interval = setInterval(poll, 1500);
     return () => clearInterval(interval);
-  }, [isLoading, onAgentUpdate]);
+  }, [isLoading]); // intentionally omits onAgentUpdate — use the ref instead
 
   const addMessage = useCallback((msg: ChatMessage) => {
     setMessages((prev) => [...prev, msg]);
@@ -136,6 +141,7 @@ export function ChatInterface({
             depositAmount: amount,
             tokenSymbol,
             sessionId,
+            evmNetwork: getCurrentNetwork(), // tells backend which HashScan to link
           }),
         });
 
