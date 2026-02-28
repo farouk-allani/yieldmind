@@ -88,10 +88,12 @@ export class HederaClient {
 
   /**
    * Verify an EVM transaction via Mirror Node.
-   * Used to confirm user-signed deposits from MetaMask.
+   * Pass `mirrorNodeUrl` matching whichever network MetaMask signed the tx on
+   * (testnet mirror for testnet txs, mainnet mirror for mainnet txs).
    */
   async verifyEvmTransaction(
-    txHash: string
+    txHash: string,
+    mirrorNodeUrl?: string
   ): Promise<{
     verified: boolean;
     from: string | null;
@@ -99,9 +101,8 @@ export class HederaClient {
     amount: string | null;
     error: string | null;
   }> {
-    // Use Bonzo network's mirror node (mainnet) for verifying deposit txs,
-    // since deposits happen on mainnet even when HCS runs on testnet.
-    const mirrorUrl = getBonzoNetworkConfig().mirrorNodeUrl;
+    // Default to mainnet mirror (most deposits are on mainnet Bonzo).
+    const mirrorUrl = mirrorNodeUrl || 'https://mainnet.mirrornode.hedera.com';
 
     try {
       const response = await fetch(

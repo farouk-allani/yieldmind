@@ -167,9 +167,14 @@ export class AgentCoordinator {
       await this.initSession(confirmation.sessionId);
     }
 
-    // Step 1: Verify the transaction via Mirror Node
+    // Step 1: Verify the transaction via Mirror Node.
+    // Use the mirror node that matches the EVM network MetaMask signed on.
+    const evmMirrorUrl = confirmation.evmNetwork === 'testnet'
+      ? 'https://testnet.mirrornode.hedera.com'
+      : 'https://mainnet.mirrornode.hedera.com';
     const verification = await this.hederaClient.verifyEvmTransaction(
-      confirmation.txHash
+      confirmation.txHash,
+      evmMirrorUrl
     );
 
     // Step 2: Executor confirms and publishes to HCS
