@@ -3,7 +3,7 @@ import {
   TopicMessageSubmitTransaction,
   TopicId,
 } from '@hashgraph/sdk';
-import type { HCSMessage, DecisionLog, HCSMessageType } from '../types/index.js';
+import type { HCSMessage, DecisionLog, HCSMessageType, AgentRole } from '../types/index.js';
 import { HederaClient } from './client.js';
 import { getNetworkConfig } from '../config/index.js';
 
@@ -158,12 +158,34 @@ export class HCSService {
 
     return data.messages.map((msg) => {
       const decoded = Buffer.from(msg.message, 'base64').toString('utf-8');
-      const parsed = JSON.parse(decoded) as HCSMessage;
+      // Messages are stored in the compact format produced by buildCompactPayload().
+      // Reconstruct the full HCSMessage shape so callers get a consistent type.
+      const compact = JSON.parse(decoded) as {
+        type: HCSMessageType;
+        agent: string;
+        action: string;
+        reasoning: string;
+        confidence: number;
+        timestamp: string;
+        session: string;
+        summary: Record<string, unknown>;
+      };
+      const payload: DecisionLog = {
+        agentId: `yieldmind-${compact.agent}-hcs`,
+        agentRole: compact.agent as AgentRole,
+        action: compact.action,
+        reasoning: compact.reasoning,
+        confidence: compact.confidence,
+        timestamp: compact.timestamp,
+        sessionId: compact.session,
+        data: compact.summary,
+      };
       return {
-        ...parsed,
+        type: compact.type,
+        payload,
         sequenceNumber: msg.sequence_number,
         consensusTimestamp: msg.consensus_timestamp,
-      };
+      } satisfies HCSMessage;
     });
   }
 

@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
 import type {
   UserIntent,
   Strategy,
@@ -45,8 +44,10 @@ export class AgentCoordinator {
   private executor: ExecutorAgent;
   private sentinel: SentinelAgent;
   private sessions: Map<string, string> = new Map(); // sessionId -> topicId
-  private decisions: DecisionLog[] = [];
-  private lastStrategy: Strategy | null = null;
+  /** Per-session decision logs. Prevents cross-user data leakage. */
+  private sessionDecisions: Map<string, DecisionLog[]> = new Map();
+  /** Per-session last proposed strategy. */
+  private sessionStrategies: Map<string, Strategy> = new Map();
 
   constructor(deps: CoordinatorDeps) {
     this.hcsService = deps.hcsService;
@@ -93,66 +94,68 @@ export class AgentCoordinator {
    * Phase 2: Executor (requires explicit user approval)
    */
   async processIntent(intent: UserIntent): Promise<ChatResponse> {
-    if (!this.sessions.has(intent.sessionId)) {
-      await this.initSession(intent.sessionId);
+    const { sessionId } = intent;
+    if (!this.sessions.has(sessionId)) {
+      await this.initSession(sessionId);
     }
+
+    const decisions = this.getOrCreateSessionDecisions(sessionId);
 
     // Phase 1: Scout scans vaults
     const scoutDecision = await this.scout.execute({
       riskTolerance: intent.riskTolerance,
       tokenSymbol: intent.tokenSymbol,
     });
-    this.decisions.push(scoutDecision);
+    decisions.push(scoutDecision);
 
     // Phase 2: Strategist builds strategy from scout data + user intent
     const strategistDecision = await this.strategist.execute({
       intent,
       vaultScanResults: scoutDecision.data,
     });
-    this.decisions.push(strategistDecision);
+    decisions.push(strategistDecision);
 
     const strategy = strategistDecision.data.strategy as Strategy | undefined;
     if (strategy) {
-      this.lastStrategy = strategy;
+      this.sessionStrategies.set(sessionId, strategy);
     }
 
     return {
       message: this.formatStrategyMessage(strategistDecision, strategy),
       agentStates: this.getAgentStates(),
       strategy: strategy,
-      decisions: this.decisions.slice(-5), // Return last 5 decisions
+      decisions: decisions.slice(-5),
     };
   }
 
   /**
-   * Execute an approved strategy — deposits into vaults
+   * Queue an approved strategy for user-signed on-chain execution.
+   * Logs the approval intent to HCS; actual deposit happens via MetaMask.
    */
   async executeStrategy(
     strategy: Strategy,
     sessionId: string
   ): Promise<ChatResponse> {
+    const decisions = this.getOrCreateSessionDecisions(sessionId);
+
     const executorDecision = await this.executor.execute({
       strategy,
       sessionId,
     });
-    this.decisions.push(executorDecision);
+    decisions.push(executorDecision);
 
-    // Start sentinel monitoring after execution
-    this.sentinel.execute({
-      strategy,
-      sessionId,
-    }).then((sentinelDecision: DecisionLog) => {
-      this.decisions.push(sentinelDecision);
-    });
+    // Start sentinel monitoring in background
+    this.sentinel.execute({ strategy, sessionId })
+      .then((sentinelDecision: DecisionLog) => {
+        decisions.push(sentinelDecision);
+      })
+      .catch(() => {/* non-critical */});
 
     return {
       message: this.formatExecutionMessage(executorDecision),
       agentStates: this.getAgentStates(),
-      strategy: {
-        ...strategy,
-        status: executorDecision.data.success ? 'active' : 'proposed',
-      },
-      decisions: this.decisions.slice(-5),
+      strategy: { ...strategy, status: 'proposed' },
+      decisions: decisions.slice(-5),
     };
   }
 
@@ -163,9 +166,12 @@ export class AgentCoordinator {
   async confirmExecution(
     confirmation: ExecutionConfirmation
   ): Promise<ChatResponse> {
-    if (!this.sessions.has(confirmation.sessionId)) {
-      await this.initSession(confirmation.sessionId);
+    const { sessionId } = confirmation;
+    if (!this.sessions.has(sessionId)) {
+      await this.initSession(sessionId);
     }
+
+    const decisions = this.getOrCreateSessionDecisions(sessionId);
 
     // Step 1: Verify the transaction via Mirror Node.
     // Use the mirror node that matches the EVM network MetaMask signed on.
@@ -182,16 +188,17 @@ export class AgentCoordinator {
       confirmation,
       verification.verified
     );
-    this.decisions.push(executorDecision);
+    decisions.push(executorDecision);
 
-    // Step 3: Start sentinel monitoring if we have a strategy
-    const strategy = this.lastStrategy;
+    // Step 3: Start sentinel monitoring if we have a strategy for this session
+    const strategy = this.sessionStrategies.get(sessionId) ?? null;
     if (strategy && verification.verified) {
       this.sentinel
-        .execute({ strategy, sessionId: confirmation.sessionId })
+        .execute({ strategy, sessionId })
         .then((sentinelDecision) => {
-          this.decisions.push(sentinelDecision);
-        });
+          decisions.push(sentinelDecision);
+        })
+        .catch(() => {/* non-critical */});
     }
 
     // Use the EVM network the MetaMask tx was signed on (testnet or mainnet).
@@ -229,7 +236,7 @@ export class AgentCoordinator {
       strategy: strategy
         ? { ...strategy, status: verification.verified ? 'active' : 'executing' }
         : undefined,
-      decisions: this.decisions.slice(-5),
+      decisions: decisions.slice(-5),
     };
   }
 
@@ -246,17 +253,33 @@ export class AgentCoordinator {
   }
 
   /**
-   * Get the last proposed strategy (for execute flow)
+   * Get the last proposed strategy for a specific session.
    */
-  getLastStrategy(): Strategy | null {
-    return this.lastStrategy;
+  getLastStrategy(sessionId: string): Strategy | null {
+    return this.sessionStrategies.get(sessionId) ?? null;
   }
 
   /**
-   * Get full decision history for the session
+   * Get decision history for a specific session.
+   * If no sessionId given, returns all decisions across all sessions (for the dashboard).
    */
-  getDecisionHistory(): DecisionLog[] {
-    return [...this.decisions];
+  getDecisionHistory(sessionId?: string): DecisionLog[] {
+    if (sessionId) {
+      return [...(this.sessionDecisions.get(sessionId) ?? [])];
+    }
+    // Flatten all sessions — used by /api/decisions which is session-agnostic
+    const all: DecisionLog[] = [];
+    for (const decisions of this.sessionDecisions.values()) {
+      all.push(...decisions);
+    }
+    return all;
+  }
+
+  private getOrCreateSessionDecisions(sessionId: string): DecisionLog[] {
+    if (!this.sessionDecisions.has(sessionId)) {
+      this.sessionDecisions.set(sessionId, []);
+    }
+    return this.sessionDecisions.get(sessionId)!;
   }
 
   private formatStrategyMessage(
@@ -289,19 +312,17 @@ export class AgentCoordinator {
   }
 
   private formatExecutionMessage(decision: DecisionLog): string {
-    if (decision.data.success) {
+    if (decision.data.awaitingSignature) {
       return [
-        '✅ Strategy executed successfully!',
-        '',
-        `Transaction: ${decision.data.transactionId}`,
-        `View on HashScan: ${decision.data.hashscanUrl}`,
+        'Strategy queued for execution. Waiting for your wallet signature.',
         '',
         `**Agent reasoning:** ${decision.reasoning}`,
         '',
-        'The Sentinel agent is now monitoring your position for market changes.',
+        'Please sign the transaction in your wallet (MetaMask) to deposit into Bonzo Finance.',
+        'The Executor agent will verify and log the transaction once confirmed on-chain.',
       ].join('\n');
     }
 
-    return `❌ Execution failed: ${decision.data.error}\n\n**Agent reasoning:** ${decision.reasoning}`;
+    return `❌ Execution error: ${decision.data.error}\n\n**Agent reasoning:** ${decision.reasoning}`;
   }
 }

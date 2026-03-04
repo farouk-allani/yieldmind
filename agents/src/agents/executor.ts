@@ -2,7 +2,6 @@ import { BaseAgent } from '../core/base-agent.js';
 import type { HCSService } from '../hedera/hcs.js';
 import type { HederaClient } from '../hedera/client.js';
 import type { DecisionLog, Strategy, ExecutionConfirmation } from '../types/index.js';
-import type { BonzoLendingPoolClient } from '../bonzo/lending-pool-client.js';
 import { getBonzoNetworkConfig, getHashscanTransactionUrl } from '../config/index.js';
 
 interface ExecutorInput {
@@ -19,146 +18,60 @@ interface ExecutorInput {
  * Every transaction is logged to HCS with reasoning and tx hash.
  */
 export class ExecutorAgent extends BaseAgent {
-  private hederaClient: HederaClient;
-  private bonzoLendingPool: BonzoLendingPoolClient;
-
-  constructor(
-    hcsService: HCSService,
-    hederaClient: HederaClient,
-    bonzoLendingPool: BonzoLendingPoolClient
-  ) {
+  constructor(hcsService: HCSService, _hederaClient: HederaClient) {
     super('executor', hcsService);
-    this.hederaClient = hederaClient;
-    this.bonzoLendingPool = bonzoLendingPool;
-  }
-
-  async execute(input: unknown): Promise<DecisionLog> {
-    const { strategy, sessionId } = input as ExecutorInput;
-    this.setStatus('executing', 'Executing vault strategy...');
-
-    try {
-      const results = [];
-
-      for (const vault of strategy.vaults) {
-        this.setStatus(
-          'executing',
-          `Depositing ${vault.allocation}% into ${vault.vaultName}...`
-        );
-
-        // Execute deposit for each vault in the strategy
-        // Use EVM address for Bonzo LendingPool, HTS address as fallback
-        const result = await this.executeVaultDeposit(
-          vault.assetEvmAddress || vault.vaultAddress,
-          vault.allocation,
-          strategy.userIntent.targetAmount
-        );
-        results.push({ vault: vault.vaultName, ...result });
-      }
-
-      const allSucceeded = results.every((r) => r.success);
-      const reasoning = this.buildReasoning(strategy, results);
-
-      const decision = this.createDecision(
-        allSucceeded ? 'execution-complete' : 'execution-partial',
-        reasoning,
-        allSucceeded ? 0.95 : 0.5,
-        sessionId,
-        {
-          success: allSucceeded,
-          results,
-          transactionId: results[0]?.transactionId || null,
-          hashscanUrl: results[0]?.hashscanUrl || null,
-          error: allSucceeded
-            ? null
-            : results
-                .filter((r) => !r.success)
-                .map((r) => r.error)
-                .join('; '),
-        }
-      );
-
-      await this.publishDecision('executor:deposit', decision);
-      this.setStatus('idle', allSucceeded ? 'Strategy active' : 'Partial execution');
-
-      return decision;
-    } catch (error) {
-      this.setStatus('error', 'Execution failed');
-      return this.createDecision(
-        'execution-failed',
-        `Failed to execute strategy: ${error instanceof Error ? error.message : 'Unknown error'}. No funds were moved.`,
-        0,
-        sessionId,
-        {
-          success: false,
-          error: String(error),
-          transactionId: null,
-          hashscanUrl: null,
-        }
-      );
-    }
+    // hederaClient reserved for future server-side operations (withdrawals, etc.)
   }
 
   /**
-   * Execute a deposit into a Bonzo lending pool.
+   * Log strategy approval to HCS and signal that the user's wallet signature
+   * is required to execute on-chain.
    *
-   * Attempts to call Bonzo's LendingPool.deposit() when available.
-   * Falls back to HBAR transfer if Bonzo is not configured or call fails.
+   * Real on-chain execution happens in the frontend:
+   *   MetaMask → WETHGateway / LendingPool.deposit() → tx confirmed
+   *   → frontend calls /api/execute/confirm → executor.confirmDeposit()
    *
-   * Every deposit is a provable on-chain transaction viewable on HashScan.
-   * The deposit intent (vault address, amount, allocation) is logged to HCS
-   * alongside the transaction, creating a full on-chain audit trail.
+   * This method records the approval intent on HCS so every step of the
+   * decision chain is auditable, even before the user signs.
    */
-  private async executeVaultDeposit(
-    vaultAddress: string,
-    allocationPercent: number,
-    totalAmount: number
-  ): Promise<{
-    success: boolean;
-    transactionId: string | null;
-    hashscanUrl: string | null;
-    error: string | null;
-    depositAmount: number;
-  }> {
-    const depositAmount = (totalAmount * allocationPercent) / 100;
+  async execute(input: unknown): Promise<DecisionLog> {
+    const { strategy, sessionId } = input as ExecutorInput;
+    this.setStatus('waiting', 'Awaiting user signature...');
 
-    // Try real Bonzo LendingPool deposit first
-    if (this.bonzoLendingPool.isAvailable()) {
-      try {
-        const result = await this.bonzoLendingPool.deposit({
-          asset: vaultAddress,
-          amount: BigInt(Math.round(depositAmount * 1e8)), // convert to tinybars
-          onBehalfOf: this.hederaClient.getAccountId(),
-        });
+    const network = getBonzoNetworkConfig().chainName;
+    const vaultList = strategy.vaults
+      .map((v) => `${v.vaultName} (${v.allocation}% · ${v.expectedApy.toFixed(1)}% APY)`)
+      .join(', ');
 
-        if (result.success) {
-          return {
-            success: true,
-            transactionId: result.transactionId,
-            hashscanUrl: result.hashscanUrl,
-            error: null,
-            depositAmount,
-          };
-        }
-        console.warn('[Executor] Bonzo deposit failed, falling back to HBAR transfer:', result.error);
-      } catch (error) {
-        console.warn('[Executor] Bonzo deposit error, falling back:', error instanceof Error ? error.message : error);
+    const reasoning =
+      `Strategy approved by Strategist. Queued for on-chain execution on ${network}. ` +
+      `Vaults: ${vaultList}. ` +
+      `Total: ${strategy.userIntent.targetAmount} ${strategy.userIntent.tokenSymbol} ` +
+      `at ${strategy.totalExpectedApy.toFixed(2)}% blended APY. ` +
+      `Waiting for user wallet signature to submit deposit transaction. ` +
+      `No funds have moved yet — execution requires explicit user approval in MetaMask.`;
+
+    const decision = this.createDecision(
+      'execution-queued',
+      reasoning,
+      0.9,
+      sessionId,
+      {
+        success: false,
+        awaitingSignature: true,
+        transactionId: null,
+        hashscanUrl: null,
+        error: null,
+        vaults: strategy.vaults.map((v) => ({
+          name: v.vaultName,
+          allocation: v.allocation,
+          apy: v.expectedApy,
+        })),
       }
-    }
-
-    // Fallback: HBAR transfer (proof-of-concept for on-chain execution)
-    const transferAmount = Math.max(0.01, depositAmount * 0.001);
-    const result = await this.hederaClient.transferHbar(
-      this.hederaClient.getAccountId(),
-      transferAmount
     );
 
-    return {
-      success: result.success,
-      transactionId: result.transactionId,
-      hashscanUrl: result.hashscanUrl,
-      error: result.error,
-      depositAmount,
-    };
+    await this.publishDecision('executor:deposit', decision);
+    return decision;
   }
 
   /**
@@ -199,37 +112,4 @@ export class ExecutorAgent extends BaseAgent {
     return decision;
   }
 
-  private buildReasoning(
-    strategy: Strategy,
-    results: {
-      vault: string;
-      success: boolean;
-      transactionId: string | null;
-      depositAmount?: number;
-    }[]
-  ): string {
-    const successful = results.filter((r) => r.success);
-    const failed = results.filter((r) => !r.success);
-
-    if (successful.length === results.length) {
-      const deposits = successful
-        .map((r) => `${r.vault} (${r.depositAmount?.toFixed(1) || '?'} ${strategy.userIntent.tokenSymbol})`)
-        .join(', ');
-
-      return (
-        `Executed ${strategy.vaults.length}-vault strategy on ${getBonzoNetworkConfig().chainName}. ` +
-        `Deposits: ${deposits}. ` +
-        `All ${successful.length} transactions confirmed on-chain. ` +
-        `Total allocation: ${strategy.userIntent.targetAmount} ${strategy.userIntent.tokenSymbol} at ${strategy.totalExpectedApy.toFixed(2)}% blended APY. ` +
-        `Sentinel agent now monitoring positions.`
-      );
-    }
-
-    return (
-      `Partially executed strategy — ${successful.length}/${results.length} deposits confirmed. ` +
-      `Succeeded: ${successful.map((r) => r.vault).join(', ') || 'none'}. ` +
-      `Failed: ${failed.map((r) => r.vault).join(', ')}. ` +
-      `Will retry failed deposits on next cycle.`
-    );
-  }
 }

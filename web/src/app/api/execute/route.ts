@@ -22,8 +22,9 @@ export async function POST(request: Request) {
       );
     }
 
-    // Retrieve the last proposed strategy from the coordinator
-    const strategy = agentRuntime.coordinator.getLastStrategy();
+    // Retrieve the strategy proposed for this specific session.
+    // Using sessionId prevents one user from executing another user's strategy.
+    const strategy = agentRuntime.coordinator.getLastStrategy(sessionId);
 
     if (!strategy) {
       return NextResponse.json(

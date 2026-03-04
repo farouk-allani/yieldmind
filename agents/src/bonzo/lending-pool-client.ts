@@ -1,4 +1,4 @@
-import { getBonzoNetworkConfig, getHashscanTransactionUrl } from '../config/index.js';
+import { getBonzoNetworkConfig } from '../config/index.js';
 
 /**
  * BonzoLendingPoolClient — Wraps Bonzo's Aave v2 LendingPool contract.
@@ -49,14 +49,12 @@ export class BonzoLendingPoolClient {
   private readonly lendingPoolAddress: string;
   private readonly lendingPoolEvmAddress: string;
   private readonly mirrorNodeUrl: string;
-  private readonly rpcUrl: string;
 
   constructor() {
     const config = getBonzoNetworkConfig();
     this.lendingPoolAddress = config.bonzo.lendingPoolAddress;
     this.lendingPoolEvmAddress = config.bonzo.lendingPoolEvmAddress;
     this.mirrorNodeUrl = config.mirrorNodeUrl;
-    this.rpcUrl = config.rpcUrl;
   }
 
   /**
@@ -83,67 +81,23 @@ export class BonzoLendingPoolClient {
   }
 
   /**
-   * Execute a deposit into Bonzo LendingPool via JSON-RPC.
-   * This is for server-side agent execution.
-   * For user-initiated deposits, the frontend calls the contract directly via MetaMask.
+   * Server-side Bonzo deposit is not supported.
+   *
+   * On-chain deposits require a user-signed EVM transaction. The backend agent
+   * account only manages HCS topic transactions on testnet and cannot sign
+   * mainnet Bonzo LendingPool calls on behalf of users.
+   *
+   * Real deposits go through: MetaMask (frontend) → WETHGateway/LendingPool
+   * → confirmed via Mirror Node → logged to HCS by executor.confirmDeposit().
    */
-  async deposit(params: DepositParams): Promise<LendingPoolResult> {
-    if (!this.isAvailable()) {
-      return {
-        success: false,
-        transactionId: null,
-        hashscanUrl: null,
-        error: 'Bonzo LendingPool not configured for this network',
-      };
-    }
-
-    try {
-      // Encode the deposit call: deposit(address, uint256, address, uint16)
-      // Function selector: 0xe8eda9df
-      const assetPadded = params.asset.replace('0x', '').padStart(64, '0');
-      const amountHex = params.amount.toString(16).padStart(64, '0');
-      const onBehalfOfPadded = params.onBehalfOf.replace('0x', '').padStart(64, '0');
-      const referralCode = (params.referralCode ?? 0).toString(16).padStart(64, '0');
-      const callData = `0xe8eda9df${assetPadded}${amountHex}${onBehalfOfPadded}${referralCode}`;
-
-      const response = await fetch(`${this.mirrorNodeUrl}/api/v1/contracts/call`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          data: callData,
-          to: this.lendingPoolEvmAddress,
-          estimate: false,
-        }),
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        return {
-          success: false,
-          transactionId: null,
-          hashscanUrl: null,
-          error: `Bonzo LendingPool call failed: ${response.status} — ${text}`,
-        };
-      }
-
-      // For actual state-changing transactions, we'd need to submit via JSON-RPC
-      // with a signed transaction. Mirror node /contracts/call is read-only.
-      // This will be done via ethers.js + the configured RPC in a future iteration.
-      // For now, this validates the call would succeed.
-      return {
-        success: true,
-        transactionId: null,
-        hashscanUrl: null,
-        error: null,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        transactionId: null,
-        hashscanUrl: null,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
-    }
+  deposit(_params: DepositParams): Promise<LendingPoolResult> {
+    return Promise.resolve({
+      success: false,
+      transactionId: null,
+      hashscanUrl: null,
+      error:
+        'Server-side deposits are not supported. Use the frontend MetaMask deposit flow — the executor agent will verify and log the transaction after you sign it.',
+    });
   }
 
   /**

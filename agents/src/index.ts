@@ -1,7 +1,7 @@
 import { HederaClient } from './hedera/client.js';
 import { HCSService } from './hedera/hcs.js';
 import { BonzoVaultClient } from './bonzo/vault-client.js';
-import { BonzoLendingPoolClient } from './bonzo/lending-pool-client.js';
+import { BonzoLendingPoolClient } from './bonzo/lending-pool-client.js'; // read-only (getUserAccountData)
 import { ScoutAgent } from './agents/scout.js';
 import { StrategistAgent } from './agents/strategist.js';
 import { ExecutorAgent } from './agents/executor.js';
@@ -37,13 +37,14 @@ export function createRuntime() {
 
   // Bonzo vault data client (reads real mainnet data for strategy building)
   const bonzoClient = new BonzoVaultClient();
-  // Bonzo LendingPool client (for real deposits on the configured network)
+  // Bonzo LendingPool client — read-only (getUserAccountData).
+  // Actual deposits are user-signed via MetaMask on the frontend.
   const bonzoLendingPool = new BonzoLendingPoolClient();
 
   // Initialize agents with dependency injection
   const scout = new ScoutAgent(hcsService, bonzoClient);
   const strategist = new StrategistAgent(hcsService, llmClient);
-  const executor = new ExecutorAgent(hcsService, hederaClient, bonzoLendingPool);
+  const executor = new ExecutorAgent(hcsService, hederaClient);
   const sentinel = new SentinelAgent(hcsService);
 
   // Wire up the coordinator
@@ -62,7 +63,7 @@ export function createRuntime() {
   console.log(`   Hedera Account: ${hederaClient.getAccountId()}`);
   console.log(`   HCS Network: ${hcsConfig.chainName} (topic creation & logging)`);
   console.log(`   Bonzo Network: ${bonzoConfig.chainName} (data, deposits, verification)`);
-  console.log(`   Bonzo LendingPool: ${bonzoLendingPool.isAvailable() ? `Connected (${bonzoConfig.bonzo.lendingPoolAddress})` : 'Unavailable (fallback mode)'}`);
+  console.log(`   Bonzo LendingPool: ${bonzoLendingPool.isAvailable() ? `Configured (${bonzoConfig.bonzo.lendingPoolAddress}) — deposits via user wallet` : 'Unavailable'}`);
   console.log('   Agents: Scout, Strategist, Executor, Sentinel');
 
   return {
