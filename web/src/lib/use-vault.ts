@@ -9,6 +9,7 @@ import {
   WETH_GATEWAY_ABI,
   VAULT_ABI,
   getBonzoLendingPoolAddress,
+  getWETHGatewayLendingPoolArg,
   getVaultAddress,
 } from './vault-abi';
 import { getNetworkConfig } from './network-config';
@@ -114,14 +115,26 @@ export function useVault() {
               const gateway = new Contract(gatewayAddress, WETH_GATEWAY_ABI, signer);
               const value = parseEther(amount.toString());
 
-              console.log(`[Vault] HBAR deposit via WETHGateway: ${amount} HBAR`);
-              console.log(`[Vault] Gateway: ${gatewayAddress}, LendingPool: ${lendingPoolAddress}`);
+              // WETHGateway expects the LendingPool in Hedera long-zero format.
+              // The WETHGateway's internal whitelist was populated with long-zero
+              // addresses (0x000...006F84AB). Passing the full EVM alias
+              // (0x236897c5...) causes a mapping miss → early revert at ~3k gas.
+              const gatewayLendingPoolArg = getWETHGatewayLendingPoolArg();
 
+              console.log(`[Vault] HBAR deposit via WETHGateway: ${amount} HBAR`);
+              console.log(`[Vault] Gateway: ${gatewayAddress}`);
+              console.log(`[Vault] LendingPool (long-zero for WETHGateway): ${gatewayLendingPoolArg}`);
+
+              // Hardcoded gasLimit bypasses eth_estimateGas.
+              // The Hedera JSON-RPC relay does NOT forward msg.value during
+              // estimateGas simulations, so the WETHGateway sees amount=0 and
+              // reverts — even though the actual transaction would succeed.
+              // 2_000_000 gas is well above the ~300k needed for the full flow.
               tx = await gateway.depositETH(
-                lendingPoolAddress, // lendingPool
-                address,            // onBehalfOf
-                0,                  // referralCode
-                { value }
+                gatewayLendingPoolArg, // long-zero LendingPool (0.0.7308459)
+                address,               // onBehalfOf
+                0,                     // referralCode
+                { value, gasLimit: 2_000_000 }
               );
             } catch (gatewayErr) {
               const errMsg = gatewayErr instanceof Error ? gatewayErr.message : String(gatewayErr);
@@ -149,11 +162,13 @@ export function useVault() {
           // Always approve for HTS tokens on Hedera.
           // The allowance() view call is unreliable on HTS tokens (returns empty 0x data),
           // so we always send a fresh approve to be safe.
+          // gasLimit bypasses estimateGas — same relay issue as HBAR path.
           setDepositStatus('approving');
           console.log(`[Vault] Approving ${lendingPoolAddress} to spend ${rawAmount} of ${symbol}...`);
           const approveTx = await tokenContract.approve(
             lendingPoolAddress,
-            rawAmount
+            rawAmount,
+            { gasLimit: 100_000 }
           );
           console.log(`[Vault] Approve tx sent: ${approveTx.hash}, waiting for confirmation...`);
           await approveTx.wait();
@@ -167,11 +182,13 @@ export function useVault() {
             signer
           );
           try {
+            // gasLimit bypasses estimateGas — Hedera relay issue (same as HBAR path).
             tx = await lendingPool.deposit(
               assetAddress,
               rawAmount,
               address, // onBehalfOf
-              0        // referralCode
+              0,       // referralCode
+              { gasLimit: 600_000 }
             );
           } catch (depositErr) {
             const errMsg = depositErr instanceof Error ? depositErr.message : String(depositErr);
@@ -216,8 +233,24 @@ export function useVault() {
           setDepositStatus('confirmed');
           return { status: 'confirmed', txHash: tx.hash, error: null };
         } else {
+          // Fetch the actual revert reason from Mirror Node for better UX
+          const mirrorNodeUrl = getNetworkConfig().mirrorNodeUrl;
+          let revertReason = 'Transaction reverted';
+          try {
+            const res = await fetch(`${mirrorNodeUrl}/api/v1/contracts/results/${tx.hash}`);
+            if (res.ok) {
+              const data = await res.json() as { error_message?: string; result?: string };
+              const detail = data.error_message || data.result;
+              if (detail && detail !== 'SUCCESS') {
+                revertReason = detail;
+                console.error(`[Vault] Revert reason from Mirror Node: ${detail}`);
+              }
+            }
+          } catch {
+            // Mirror Node unavailable — use generic message
+          }
           setDepositStatus('failed');
-          return { status: 'failed', txHash: tx.hash, error: 'Transaction reverted' };
+          return { status: 'failed', txHash: tx.hash, error: revertReason };
         }
       } catch (err: unknown) {
         setDepositStatus('failed');

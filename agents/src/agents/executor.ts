@@ -87,7 +87,7 @@ export class ExecutorAgent extends BaseAgent {
     const token = confirmation.tokenSymbol || 'HBAR';
     const reasoning = verified
       ? `User deposit confirmed on-chain. Transaction ${confirmation.txHash} from ${confirmation.userAddress} ` +
-        `for ${confirmation.depositAmount} ${token} deposited into YieldMindVault contract. ` +
+        `for ${confirmation.depositAmount} ${token} deposited into Bonzo Finance LendingPool. ` +
         `Verified via Mirror Node. Sentinel monitoring activated.`
       : `User submitted deposit transaction ${confirmation.txHash} but on-chain verification ` +
         `is still pending. The transaction may need more time to propagate to the mirror node.`;

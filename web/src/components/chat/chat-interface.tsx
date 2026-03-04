@@ -399,7 +399,7 @@ function StrategyApprovalCard({
       <div className="px-4 py-3 border-b border-border-subtle flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 mb-0.5">
-            <TrendingUp className="w-3.5 h-3.5 text-supply" />
+            {/* <TrendingUp className="w-3.5 h-3.5 text-supply" /> */}
             <span className="text-sm font-semibold text-text-primary">
               Strategy Proposal
             </span>

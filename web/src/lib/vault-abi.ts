@@ -5,7 +5,7 @@
  * Strategy tracking is handled off-chain via HCS decision logs.
  */
 
-import { getNetworkConfig, getVaultAddress } from './network-config';
+import { getNetworkConfig, getVaultAddress, getCurrentNetwork } from './network-config';
 
 export const BONZO_LENDING_POOL_ABI = [
   'function deposit(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) external',
@@ -38,6 +38,26 @@ export const WETH_GATEWAY_ABI = [
 
 /** Bonzo LendingPool address for the current network */
 export function getBonzoLendingPoolAddress(): string {
+  return getNetworkConfig().bonzoLendingPoolAddress;
+}
+
+/**
+ * Return the lendingPool address to pass to WETHGateway.depositETH().
+ *
+ * Hedera's WETHGateway validates the lendingPool parameter against an
+ * internal whitelist that was populated using Hedera long-zero format
+ * addresses (0x000...00<accountId_hex>). Passing the full EVM alias
+ * (0x236897c5...) causes a storage-mapping miss → revert at ~3,159 gas.
+ *
+ * Long-zero = 0x + 34 zero hex chars + 6-char Hedera account ID in hex.
+ * Mainnet LendingPool account 0.0.7308459 → hex 6F84AB → long-zero below.
+ */
+export function getWETHGatewayLendingPoolArg(): string {
+  const network = getCurrentNetwork();
+  if (network === 'mainnet') {
+    return '0x00000000000000000000000000000000006F84AB'; // 0.0.7308459 long-zero
+  }
+  // Testnet — non-functional but return the configured address so errors are clear
   return getNetworkConfig().bonzoLendingPoolAddress;
 }
 
