@@ -99,19 +99,19 @@ export function ChatInterface({
     const assetEvmAddress = primaryVault?.assetEvmAddress;
     const vaultSymbol = primaryVault?.symbol || 'HBAR';
     const vaultDecimals = primaryVault?.decimals || 8;
-    const isNativeHbar = vaultSymbol === 'WHBAR' || vaultSymbol === 'HBAR';
+    const isNativeHbar = vaultSymbol === 'HBAR' && !assetEvmAddress;
     const depositTarget = vault.isBonzoDirect && assetEvmAddress ? 'Bonzo LendingPool' : 'YieldMindVault';
 
     addMessage({
       id: `system-signing-${Date.now()}`,
       role: 'system',
       content: isNativeHbar
-        ? `Requesting deposit of ${amount} ${tokenSymbol} into ${depositTarget}... Please confirm in MetaMask.`
+        ? `Requesting deposit of ${amount} ${tokenSymbol} into ${depositTarget}... Please confirm in your wallet.`
         : `Requesting deposit of ${amount} ${tokenSymbol} into ${depositTarget}... This requires 2 signatures: token approval + deposit.`,
       timestamp: new Date().toISOString(),
     });
 
-    // Call the vault deposit — triggers MetaMask popup(s)
+    // Call the vault deposit — triggers wallet popup(s)
     // Pass symbol + decimals for correct token-aware flow (HBAR vs ERC-20)
     const result = await vault.deposit(
       strategy.id,

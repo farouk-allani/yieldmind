@@ -47,16 +47,17 @@ export function NetworkToggle() {
 
     // Ask MetaMask to switch chain
     const config = getNetworkConfig();
-    if (typeof window !== 'undefined' && window.ethereum) {
+    const eth = typeof window !== 'undefined' ? (window.ethereum as { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> } | undefined) : undefined;
+    if (eth) {
       try {
-        await window.ethereum.request({
+        await eth.request({
           method: 'wallet_switchEthereumChain',
           params: [{ chainId: config.chainIdHex }],
         });
       } catch (switchError: unknown) {
         const err = switchError as { code?: number };
         if (err.code === 4902) {
-          await window.ethereum.request({
+          await eth.request({
             method: 'wallet_addEthereumChain',
             params: [
               {

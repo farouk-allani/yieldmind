@@ -6,10 +6,8 @@ import { useWallet } from './wallet-context';
 import {
   BONZO_LENDING_POOL_ABI,
   ERC20_ABI,
-  WETH_GATEWAY_ABI,
   VAULT_ABI,
   getBonzoLendingPoolAddress,
-  getWETHGatewayLendingPoolArg,
   getVaultAddress,
 } from './vault-abi';
 import { getNetworkConfig } from './network-config';
@@ -38,8 +36,205 @@ export interface TxResult {
 /** @deprecated Use TxResult instead */
 export type DepositResult = TxResult;
 
+// ── Hedera SDK deposit via WalletConnect (HashPack / Kabila) ──
+
+// ── Known Bonzo contract Hedera IDs ──
+// We maintain these mappings because ContractId.fromEvmAddress() doesn't
+// reverse-lookup the actual Hedera ID — it just encodes bytes, causing
+// INVALID_CONTRACT_ID errors. These are verified via Mirror Node.
+const BONZO_HEDERA_IDS: Record<string, Record<string, string>> = {
+  mainnet: {
+    // LendingPool: 0x236897c518996163E7b313aD21D1C9fCC7BA1afc
+    lendingPool: '0.0.7308459',
+    lendingPoolEvm: '236897c518996163e7b313ad21d1c9fcc7ba1afc',
+    // WHBARGateway (Hedera-native): 0xa7e46f496b088a8f8ee35b74d7e58d6ce648ae64
+    // Uses depositHBAR(address,address,uint16) — wraps HBAR→WHBAR via IWhbarHelper
+    whbarGateway: '0.0.10071466',
+  },
+  testnet: {
+    // LendingPool: 0xf67DBe9bD1B331cA379c44b5562EAa1CE831EbC2
+    lendingPool: '0.0.4999355',
+    lendingPoolEvm: 'f67dbe9bd1b331ca379c44b5562eaa1ce831ebc2',
+    // WETHGateway (testnet): 0x16197Ef10F26De77C9873d075f8774BdEc20A75d
+    whbarGateway: '0.0.4999360',
+  },
+};
+
+/**
+ * Resolve an EVM address to a Hedera account/contract ID via Mirror Node.
+ * Falls back to extracting the account number from long-zero format addresses.
+ */
+async function resolveHederaId(evmAddress: string, mirrorNodeUrl: string): Promise<string> {
+  // Long-zero format (0x000...00XXXX) — extract account number directly
+  if (evmAddress.startsWith('0x000000000000000000000000000000')) {
+    const accountNum = parseInt(evmAddress.slice(2), 16);
+    return `0.0.${accountNum}`;
+  }
+
+  // Full EVM alias — look up via Mirror Node
+  try {
+    const res = await fetch(`${mirrorNodeUrl}/api/v1/accounts/${evmAddress}`);
+    if (res.ok) {
+      const data = await res.json() as { account?: string };
+      if (data.account) return data.account;
+    }
+  } catch {
+    // Mirror Node unavailable
+  }
+
+  throw new Error(`Cannot resolve Hedera ID for ${evmAddress}`);
+}
+
+/**
+ * Execute a Bonzo deposit using the Hedera SDK + WalletConnect.
+ *
+ * For HBAR: calls WHBARGateway.depositHBAR(lendingPool, onBehalfOf, referralCode)
+ *   with native HBAR value. The WHBARGateway wraps HBAR→WHBAR via IWhbarHelper
+ *   then deposits into LendingPool. Selector: 0x08154a7b
+ *
+ * For ERC-20 (USDC, etc.): approve + LendingPool.deposit()
+ */
+async function depositViaHederaSDK(
+  accountId: string,
+  lendingPoolAddress: string,
+  assetAddress: string,
+  rawAmount: bigint,
+  symbol: string,
+  isNativeHbar: boolean,
+  setStatus: (s: TxStatus) => void,
+): Promise<TxResult> {
+  const { ContractExecuteTransaction, ContractId, AccountAllowanceApproveTransaction, TokenId, Hbar } =
+    await import('@hiero-ledger/sdk');
+  const { getHederaConnector, transactionToBase64String } =
+    await import('./hedera-wallet-connect');
+  const { getCurrentNetwork, getNetworkConfig } = await import('./network-config');
+
+  const connector = await getHederaConnector();
+  const network = getCurrentNetwork();
+  const mirrorNodeUrl = getNetworkConfig().mirrorNodeUrl;
+  const knownIds = BONZO_HEDERA_IDS[network] || BONZO_HEDERA_IDS.mainnet;
+  const signerAccountId = `hedera:${network}:${accountId}`;
+
+  // Resolve the user's EVM address for onBehalfOf parameter
+  let userEvmAddress = '';
+  try {
+    const res = await fetch(`${mirrorNodeUrl}/api/v1/accounts/${accountId}`);
+    if (res.ok) {
+      const data = await res.json() as { evm_address?: string };
+      userEvmAddress = data.evm_address || '';
+    }
+  } catch { /* use fallback */ }
+
+  // Build onBehalfOf: user's address in 32-byte ABI-encoded form
+  let onBehalfOf: string;
+  if (userEvmAddress) {
+    onBehalfOf = userEvmAddress.replace('0x', '').toLowerCase().padStart(64, '0');
+  } else {
+    const accountNum = parseInt(accountId.split('.')[2], 10);
+    onBehalfOf = accountNum.toString(16).padStart(64, '0');
+  }
+
+  if (isNativeHbar) {
+    // ── HBAR deposit via WHBARGateway ──
+    // WHBARGateway.depositHBAR(address lendingPool, address onBehalfOf, uint16 referralCode)
+    // Selector: 0x08154a7b (keccak256)
+    // The HBAR value is sent as payableAmount — WHBARGateway wraps it to WHBAR via IWhbarHelper.
+    // IMPORTANT: lendingPool param must be the EVM address (not Hedera ID).
+    setStatus('signing');
+    console.log(`[Vault/SDK] Depositing ${symbol} via WHBARGateway.depositHBAR (HBAR→WHBAR wrap + deposit)...`);
+
+    // LendingPool EVM address padded to 32 bytes (the WHBARGateway validates this)
+    const lendingPoolEvmPadded = (knownIds.lendingPoolEvm || '').padStart(64, '0');
+    const referralCode = ''.padStart(64, '0');
+
+    const callData = Buffer.from(
+      '08154a7b' + lendingPoolEvmPadded + onBehalfOf + referralCode,
+      'hex'
+    );
+
+    // Convert HBAR amount: rawAmount is in tinybars (8 decimals)
+    const hbarAmount = Hbar.fromTinybars(Number(rawAmount));
+
+    const depositTx = new ContractExecuteTransaction()
+      .setContractId(ContractId.fromString(knownIds.whbarGateway))
+      .setGas(2_000_000) // WHBARGateway needs ~1.75M gas (wrap + approve + deposit)
+      .setPayableAmount(hbarAmount)
+      .setFunctionParameters(callData)
+      .setMaxTransactionFee(new Hbar(10));
+
+    setStatus('confirming');
+    const result = await connector.signAndExecuteTransaction({
+      signerAccountId,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      transactionList: transactionToBase64String(depositTx as any),
+    });
+
+    console.log('[Vault/SDK] WHBARGateway deposit result:', result);
+    const txId = (result as { transactionId?: string })?.transactionId || null;
+    setStatus('confirmed');
+    return { status: 'confirmed', txHash: txId, error: null };
+
+  } else {
+    // ── ERC-20 deposit: approve + LendingPool.deposit() ──
+
+    // Step 1: Approve the LendingPool to spend the token
+    setStatus('approving');
+    const tokenHederaId = await resolveHederaId(assetAddress, mirrorNodeUrl);
+    console.log(`[Vault/SDK] Approving ${symbol} (${tokenHederaId}) for LendingPool...`);
+
+    const approveTx = new AccountAllowanceApproveTransaction()
+      .approveTokenAllowance(
+        TokenId.fromString(tokenHederaId),
+        accountId,
+        knownIds.lendingPool,
+        Number(rawAmount),
+      )
+      .setMaxTransactionFee(new Hbar(2));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const approveResult = await connector.signAndExecuteTransaction({
+      signerAccountId,
+      transactionList: transactionToBase64String(approveTx as any),
+    });
+    console.log('[Vault/SDK] Approve result:', approveResult);
+
+    // Step 2: Call LendingPool.deposit(asset, amount, onBehalfOf, referralCode)
+    setStatus('signing');
+    console.log(`[Vault/SDK] Depositing ${symbol} into Bonzo LendingPool...`);
+
+    // ABI encode: deposit(address,uint256,address,uint16) = 0xe8eda9df
+    const assetPadded = assetAddress.replace('0x', '').toLowerCase().padStart(64, '0');
+    const amountHex = rawAmount.toString(16).padStart(64, '0');
+    const referralCode = ''.padStart(64, '0');
+    const callData = Buffer.from(
+      'e8eda9df' + assetPadded + amountHex + onBehalfOf + referralCode,
+      'hex'
+    );
+
+    const depositTx = new ContractExecuteTransaction()
+      .setContractId(ContractId.fromString(knownIds.lendingPool))
+      .setGas(1_500_000) // Hedera HTS operations need more gas than standard EVM
+      .setFunctionParameters(callData)
+      .setMaxTransactionFee(new Hbar(10));
+
+    setStatus('confirming');
+    const result = await connector.signAndExecuteTransaction({
+      signerAccountId,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      transactionList: transactionToBase64String(depositTx as any),
+    });
+
+    console.log('[Vault/SDK] LendingPool deposit result:', result);
+    const txId = (result as { transactionId?: string })?.transactionId || null;
+    setStatus('confirmed');
+    return { status: 'confirmed', txHash: txId, error: null };
+  }
+}
+
+// ── Main hook ──
+
 export function useVault() {
-  const { provider, address, isConnected, isCorrectNetwork } = useWallet();
+  const { provider, address, accountId, isConnected, isCorrectNetwork, walletType } = useWallet();
   const [depositStatus, setDepositStatus] = useState<TxStatus>('idle');
   const [withdrawStatus, setWithdrawStatus] = useState<TxStatus>('idle');
 
@@ -53,14 +248,14 @@ export function useVault() {
     isCorrectNetwork &&
     !!(bonzoAvailable ? bonzoAddress : vaultAddress);
 
+  const isWalletConnect = walletType === 'hashpack' || walletType === 'walletconnect';
+
   /**
-   * Deposit into Bonzo LendingPool (or YieldMindVault as fallback).
+   * Deposit into Bonzo LendingPool.
    *
-   * Token-aware: detects HBAR vs ERC-20 tokens and uses the correct flow.
-   * - HBAR/WHBAR: WETHGateway.depositETH() — wraps HBAR → WHBAR then deposits
-   * - ERC-20 (USDC, USDT, etc.): approve() + LendingPool.deposit() without msg.value
-   *
-   * Falls back to YieldMindVault if WETHGateway/LendingPool are not available.
+   * Two paths:
+   * - MetaMask: ethers.js Contract calls (approve + deposit)
+   * - HashPack/Kabila: Hedera SDK ContractExecuteTransaction via WalletConnect
    */
   const deposit = useCallback(
     async (
@@ -71,12 +266,52 @@ export function useVault() {
       symbol: string = 'HBAR',
       decimals: number = 8
     ): Promise<TxResult> => {
+      // ── WalletConnect path (HashPack / Kabila) ──
+      if (isWalletConnect && accountId) {
+        const lendingPoolAddress = getBonzoLendingPoolAddress();
+        if (!lendingPoolAddress) {
+          return { status: 'failed', txHash: null, error: 'Bonzo LendingPool not configured' };
+        }
+
+        // Determine if this is a native HBAR deposit (goes through WETHGateway)
+        // or an ERC-20 deposit (approve + LendingPool.deposit)
+        const isHbar = symbol === 'HBAR' || symbol === 'WHBAR';
+        const tokenAddress = assetAddress || (isHbar ? '0x0000000000000000000000000000000000163b5a' : '');
+        if (!tokenAddress) {
+          return { status: 'failed', txHash: null, error: `No asset address for ${symbol}` };
+        }
+
+        const rawAmount = BigInt(Math.round(amount * Math.pow(10, decimals)));
+
+        try {
+          setDepositStatus('signing');
+          return await depositViaHederaSDK(
+            accountId,
+            lendingPoolAddress,
+            tokenAddress,
+            rawAmount,
+            symbol,
+            isHbar, // HBAR → WHBARGateway, ERC-20 → LendingPool
+            setDepositStatus,
+          );
+        } catch (err: unknown) {
+          setDepositStatus('failed');
+          const error = err as { message?: string };
+          console.error('[Vault/SDK] Deposit error:', error);
+          return {
+            status: 'failed',
+            txHash: null,
+            error: error.message || 'WalletConnect deposit failed',
+          };
+        }
+      }
+
+      // ── MetaMask path (ethers.js) ──
       if (!provider || !address) {
         return { status: 'failed', txHash: null, error: 'Wallet not connected' };
       }
 
-      // Hard network check — prevent deposits on wrong chain.
-      // This catches cases where MetaMask is on testnet but UI expects mainnet.
+      // Hard network check — prevent deposits on wrong chain
       const expectedConfig = getNetworkConfig();
       try {
         const walletNetwork = await provider.getNetwork();
@@ -98,52 +333,58 @@ export function useVault() {
 
       try {
         const signer = await provider.getSigner();
-        const isNativeHbar = symbol === 'WHBAR' || symbol === 'HBAR';
-        const networkConfig = getNetworkConfig();
+        // isNativeHbar is only true for bare 'HBAR' with no EVM asset address.
+        // WHBAR has a real EVM address and goes through the ERC-20 path.
+        const isNativeHbar = symbol === 'HBAR' && !assetAddress;
 
         let tx;
 
         if (isNativeHbar) {
-          // ── HBAR deposit via WETHGateway ──
-          // On Hedera, native HBAR MUST go through WETHGateway (wraps to WHBAR).
-          // Calling LendingPool.deposit() directly with msg.value does NOT work.
-          const gatewayAddress = networkConfig.wethGatewayAddress;
+          // ── HBAR deposit (MetaMask) ──
+          // The Bonzo WETHGateway on mainnet is broken (zero immutables).
+          // Try WHBAR as ERC-20 if user has pre-wrapped WHBAR.
+          const whbarAddress = '0x0000000000000000000000000000000000163b5a';
 
-          if (gatewayAddress && lendingPoolAddress) {
+          if (lendingPoolAddress && assetAddress) {
+            // Fall through to ERC-20 path below
+          } else if (lendingPoolAddress) {
+            const rawAmount = BigInt(Math.round(amount * 1e8));
+            const whbarContract = new Contract(whbarAddress, ERC20_ABI, signer);
+
+            console.log(`[Vault] HBAR→WHBAR ERC-20 deposit: ${amount} WHBAR`);
+            setDepositStatus('approving');
+            const approveTx = await whbarContract.approve(
+              lendingPoolAddress,
+              rawAmount,
+              { gasLimit: 100_000 }
+            );
+            await approveTx.wait();
+
+            setDepositStatus('signing');
+            const lendingPool = new Contract(lendingPoolAddress, BONZO_LENDING_POOL_ABI, signer);
             try {
-              setDepositStatus('signing');
-              const gateway = new Contract(gatewayAddress, WETH_GATEWAY_ABI, signer);
-              const value = parseEther(amount.toString());
-
-              // WETHGateway expects the LendingPool in Hedera long-zero format.
-              // The WETHGateway's internal whitelist was populated with long-zero
-              // addresses (0x000...006F84AB). Passing the full EVM alias
-              // (0x236897c5...) causes a mapping miss → early revert at ~3k gas.
-              const gatewayLendingPoolArg = getWETHGatewayLendingPoolArg();
-
-              console.log(`[Vault] HBAR deposit via WETHGateway: ${amount} HBAR`);
-              console.log(`[Vault] Gateway: ${gatewayAddress}`);
-              console.log(`[Vault] LendingPool (long-zero for WETHGateway): ${gatewayLendingPoolArg}`);
-
-              // Hardcoded gasLimit bypasses eth_estimateGas.
-              // The Hedera JSON-RPC relay does NOT forward msg.value during
-              // estimateGas simulations, so the WETHGateway sees amount=0 and
-              // reverts — even though the actual transaction would succeed.
-              // 2_000_000 gas is well above the ~300k needed for the full flow.
-              tx = await gateway.depositETH(
-                gatewayLendingPoolArg, // long-zero LendingPool (0.0.7308459)
-                address,               // onBehalfOf
-                0,                     // referralCode
-                { value, gasLimit: 2_000_000 }
+              tx = await lendingPool.deposit(
+                whbarAddress,
+                rawAmount,
+                address,
+                0,
+                { gasLimit: 600_000 }
               );
-            } catch (gatewayErr) {
-              const errMsg = gatewayErr instanceof Error ? gatewayErr.message : String(gatewayErr);
-              console.warn('[Vault] WETHGateway deposit failed, falling back to YieldMindVault:', errMsg);
-              // Fall through to YieldMindVault fallback below
+            } catch (whbarErr) {
+              const errMsg = whbarErr instanceof Error ? whbarErr.message : String(whbarErr);
+              console.warn('[Vault] WHBAR deposit failed:', errMsg);
+              setDepositStatus('failed');
+              return {
+                status: 'failed',
+                txHash: null,
+                error:
+                  'HBAR deposit via MetaMask failed. Try connecting with HashPack or Kabila ' +
+                  'for native Hedera wallet support, or deposit USDC/USDT directly.',
+              };
             }
           }
 
-          // Fallback: YieldMindVault (accepts native HBAR only, testnet only)
+          // Fallback: YieldMindVault (testnet only)
           if (!tx && yieldVaultAddress) {
             setDepositStatus('signing');
             const contract = new Contract(yieldVaultAddress, VAULT_ABI, signer);
@@ -159,10 +400,6 @@ export function useVault() {
           console.log(`[Vault] ERC-20 deposit: ${amount} ${symbol} (${rawAmount} raw, ${decimals} decimals)`);
           console.log(`[Vault] Token: ${assetAddress}, LendingPool: ${lendingPoolAddress}`);
 
-          // Always approve for HTS tokens on Hedera.
-          // The allowance() view call is unreliable on HTS tokens (returns empty 0x data),
-          // so we always send a fresh approve to be safe.
-          // gasLimit bypasses estimateGas — same relay issue as HBAR path.
           setDepositStatus('approving');
           console.log(`[Vault] Approving ${lendingPoolAddress} to spend ${rawAmount} of ${symbol}...`);
           const approveTx = await tokenContract.approve(
@@ -174,7 +411,6 @@ export function useVault() {
           await approveTx.wait();
           console.log('[Vault] Approve confirmed. Proceeding to deposit...');
 
-          // Deposit (MetaMask popup 2/2)
           setDepositStatus('signing');
           const lendingPool = new Contract(
             lendingPoolAddress,
@@ -182,7 +418,6 @@ export function useVault() {
             signer
           );
           try {
-            // gasLimit bypasses estimateGas — Hedera relay issue (same as HBAR path).
             tx = await lendingPool.deposit(
               assetAddress,
               rawAmount,
@@ -194,10 +429,6 @@ export function useVault() {
             const errMsg = depositErr instanceof Error ? depositErr.message : String(depositErr);
             console.warn('[Vault] Bonzo LendingPool deposit failed:', errMsg);
 
-            // Known issue: Bonzo testnet aToken contracts are not associated with
-            // HTS tokens, causing CALLER_NOT_AUTHORIZED on every deposit attempt.
-            // This is a Bonzo testnet deployment limitation (no one has ever
-            // successfully deposited into this LendingPool — verified via Mirror Node).
             const isBonzoAuthError = errMsg.includes('CALLER_NOT_AUTHORIZED') ||
               errMsg.includes('Failed to send tokens');
 
@@ -207,9 +438,7 @@ export function useVault() {
               txHash: null,
               error: isBonzoAuthError
                 ? `Bonzo testnet lending pools are not yet active for ${symbol} deposits. ` +
-                  `The strategy was built using real Bonzo reserve data, but the testnet ` +
-                  `aToken contracts cannot receive HTS tokens yet. ` +
-                  `Try depositing HBAR instead, which uses the YieldMind escrow contract.`
+                  `Try connecting with HashPack or Kabila for native Hedera wallet support.`
                 : `${symbol} deposit failed: ${errMsg}`,
             };
           }
@@ -221,8 +450,8 @@ export function useVault() {
             status: 'failed',
             txHash: null,
             error: isNativeHbar
-              ? 'No deposit contract configured (WETHGateway + YieldMindVault both unavailable)'
-              : `Cannot deposit ${symbol} — Bonzo LendingPool is not configured. Set NEXT_PUBLIC_BONZO_LENDING_POOL_ADDRESS in your environment.`,
+              ? 'No deposit contract configured. Try connecting with HashPack or Kabila.'
+              : `Cannot deposit ${symbol} — Bonzo LendingPool is not configured.`,
           };
         }
 
@@ -233,7 +462,6 @@ export function useVault() {
           setDepositStatus('confirmed');
           return { status: 'confirmed', txHash: tx.hash, error: null };
         } else {
-          // Fetch the actual revert reason from Mirror Node for better UX
           const mirrorNodeUrl = getNetworkConfig().mirrorNodeUrl;
           let revertReason = 'Transaction reverted';
           try {
@@ -247,7 +475,7 @@ export function useVault() {
               }
             }
           } catch {
-            // Mirror Node unavailable — use generic message
+            // Mirror Node unavailable
           }
           setDepositStatus('failed');
           return { status: 'failed', txHash: tx.hash, error: revertReason };
@@ -264,7 +492,7 @@ export function useVault() {
         return { status: 'failed', txHash: null, error: error.message || 'Unknown error' };
       }
     },
-    [provider, address]
+    [provider, address, accountId, isWalletConnect]
   );
 
   /**
@@ -280,7 +508,6 @@ export function useVault() {
         return { status: 'failed', txHash: null, error: 'Wallet not connected' };
       }
 
-      // Snapshot addresses at call time
       const lendingPoolAddress = getBonzoLendingPoolAddress();
       const yieldVaultAddress = getVaultAddress();
 
@@ -291,18 +518,10 @@ export function useVault() {
         let tx;
 
         if (lendingPoolAddress && assetAddress) {
-          // Direct Bonzo LendingPool withdrawal
-          const contract = new Contract(
-            lendingPoolAddress,
-            BONZO_LENDING_POOL_ABI,
-            signer
-          );
-
-          // Use MaxUint256 to withdraw full balance, or compute token-specific amount
+          const contract = new Contract(lendingPoolAddress, BONZO_LENDING_POOL_ABI, signer);
           const amountRaw = BigInt(Math.round(amountHbar * 1e8));
           tx = await contract.withdraw(assetAddress, amountRaw, address);
         } else if (yieldVaultAddress) {
-          // Fallback: YieldMindVault withdrawal
           const contract = new Contract(yieldVaultAddress, VAULT_ABI, signer);
           const strategyIdHash = keccak256(toUtf8Bytes(strategyId));
           const amountTinybars = BigInt(Math.round(amountHbar * 1e8));
@@ -338,7 +557,6 @@ export function useVault() {
 
   /**
    * Emergency withdraw ALL HBAR from YieldMindVault (all strategies).
-   * Only available when using the legacy YieldMindVault contract.
    */
   const emergencyWithdraw = useCallback(
     async (): Promise<TxResult> => {

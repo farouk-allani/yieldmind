@@ -25,10 +25,19 @@ export const WHBAR_EVM_ADDRESS: Record<string, string> = {
 
 /**
  * Normalize token symbol for vault lookups.
- * "HBAR" → "WHBAR" (since Bonzo uses wrapped HBAR)
+ * "HBAR" → "WHBAR" (since Bonzo uses wrapped HBAR internally)
  */
 export function normalizeTokenSymbol(symbol: string): string {
   return symbol.toUpperCase() === 'HBAR' ? 'WHBAR' : symbol.toUpperCase();
+}
+
+/**
+ * Get display name for a vault symbol.
+ * Bonzo shows "HBAR" in the UI but the underlying token is WHBAR.
+ * We match that behavior so users see familiar names.
+ */
+export function displaySymbol(symbol: string): string {
+  return symbol.toUpperCase() === 'WHBAR' ? 'HBAR' : symbol.toUpperCase();
 }
 
 // ── Testnet reserve definitions ──────────────────────────────────────
@@ -220,19 +229,20 @@ export class BonzoVaultClient {
       // Parse liquidity in token units
       const liquidityDepth = parseFloat(reserve.available_liquidity.token_display) || 0;
 
+      const display = displaySymbol(reserve.symbol);
       vaults.push({
         address: reserve.hts_address,
         evmAddress: reserve.evm_address,
-        symbol: reserve.symbol,
+        symbol: reserve.symbol, // Keep real symbol for contract interactions
         decimals: reserve.decimals,
-        name: `${reserve.symbol} Supply Pool`,
-        tokenPair: `${reserve.symbol}/USD`,
+        name: `${display} Supply Pool`,
+        tokenPair: `${display}/USD`,
         apy: reserve.supply_apy, // Already a percentage from the API
         tvl: tvlUsd,
         riskLevel: this.assessRisk(reserve.ltv),
         liquidityDepth,
         lastHarvest: data.timestamp,
-        rewardToken: reserve.symbol,
+        rewardToken: display,
       });
     }
 
@@ -250,13 +260,14 @@ export class BonzoVaultClient {
 
     return activeReserves.map((reserve) => {
       const fallback = TESTNET_FALLBACK_APYS[reserve.symbol];
+      const display = displaySymbol(reserve.symbol);
       return {
         address: reserve.hts_address,
         evmAddress: reserve.evm_address,
         symbol: reserve.symbol,
         decimals: reserve.decimals,
-        name: `${reserve.symbol} Supply Pool`,
-        tokenPair: `${reserve.symbol}/USD`,
+        name: `${display} Supply Pool`,
+        tokenPair: `${display}/USD`,
         apy: fallback?.supplyApy || 0,
         tvl: fallback?.tvlUsd || 0,
         riskLevel: this.assessRisk(reserve.ltv),

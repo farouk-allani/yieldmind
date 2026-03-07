@@ -28,5 +28,8 @@
     "autonomous"
   ],
   "author": "Farouk",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@hiero-ledger/proto": "^2.25.0"
+  }
 }
