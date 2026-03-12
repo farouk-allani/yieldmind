@@ -4,8 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { TrendingUp, Vault, ExternalLink, RefreshCw, Shield } from 'lucide-react';
 import { useWallet } from '@/lib/wallet-context';
-import { useVault } from '@/lib/use-vault';
-import { hashscanAccountUrl, hashscanContractUrl } from '@/lib/network-config';
+import { useBonzoPositions } from '@/lib/use-bonzo-positions';
+import { hashscanAccountUrl } from '@/lib/network-config';
 import type { Strategy } from '@/lib/types';
 
 interface PositionPanelProps {
@@ -14,31 +14,7 @@ interface PositionPanelProps {
 
 export function PositionPanel({ activeStrategy }: PositionPanelProps) {
   const wallet = useWallet();
-  const vault = useVault();
-  const [userTotal, setUserTotal] = useState<string>('0');
-  const [tvl, setTvl] = useState<string>('0');
-  const [isRefreshing, setIsRefreshing] = useState(false);
-
-  const refreshPositions = useCallback(async () => {
-    if (!wallet.isConnected) return;
-    setIsRefreshing(true);
-    try {
-      const [total, totalLocked] = await Promise.all([
-        vault.getUserTotal(),
-        vault.getTVL(),
-      ]);
-      setUserTotal(total);
-      setTvl(totalLocked);
-    } catch {
-      // Silently fail
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, [wallet.isConnected, vault]);
-
-  useEffect(() => {
-    refreshPositions();
-  }, [refreshPositions]);
+  const bonzo = useBonzoPositions();
 
   if (!wallet.isConnected) {
     return (
@@ -57,7 +33,7 @@ export function PositionPanel({ activeStrategy }: PositionPanelProps) {
     );
   }
 
-  const hasPosition = parseFloat(userTotal) > 0;
+  const hasPositions = bonzo.positions.length > 0;
 
   return (
     <div>
@@ -66,67 +42,83 @@ export function PositionPanel({ activeStrategy }: PositionPanelProps) {
           Your Position
         </h3>
         <button
-          onClick={refreshPositions}
-          disabled={isRefreshing}
+          onClick={bonzo.refresh}
+          disabled={bonzo.isLoading}
           className="ml-auto p-1 rounded-[8px] hover:bg-surface transition-colors"
         >
           <RefreshCw
-            className={`w-3 h-3 text-text-muted ${isRefreshing ? 'animate-spin' : ''}`}
+            className={`w-3 h-3 text-text-muted ${bonzo.isLoading ? 'animate-spin' : ''}`}
           />
         </button>
       </div>
 
       <div className="space-y-2">
-        {/* Total deposited */}
-        <motion.div
-          initial={{ opacity: 0, x: 12 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="glass-card px-3 py-3"
-        >
-          <div className="flex items-center justify-between">
+        {/* Bonzo positions */}
+        {hasPositions ? (
+          <motion.div
+            initial={{ opacity: 0, x: 12 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="glass-card px-3 py-3"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <div className="rounded-full bg-badge-supply p-1.5">
+                  <Vault className="w-3.5 h-3.5 text-supply" />
+                </div>
+                <div>
+                  <div className="text-[11px] text-text-muted">Bonzo Deposits</div>
+                  <div className="text-sm font-bold text-text-primary">
+                    ${bonzo.totalUsdValue.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+              {wallet.address && (
+                <a
+                  href={hashscanAccountUrl(wallet.accountId || wallet.address)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-1.5 rounded-[8px] hover:bg-surface transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-text-muted" />
+                </a>
+              )}
+            </div>
+
+            <div className="space-y-1.5 pl-8">
+              {bonzo.positions.map((pos) => (
+                <div
+                  key={pos.symbol}
+                  className="flex items-center justify-between text-[11px]"
+                >
+                  <span className="text-text-secondary">
+                    {pos.balance.toFixed(pos.decimals <= 6 ? 2 : 4)} {pos.displaySymbol}
+                  </span>
+                  <span className="text-supply whitespace-nowrap">
+                    {pos.supplyApy.toFixed(2)}% APY
+                  </span>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            initial={{ opacity: 0, x: 12 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="glass-card px-3 py-3"
+          >
             <div className="flex items-center gap-2">
               <div className="rounded-full bg-badge-supply p-1.5">
                 <Vault className="w-3.5 h-3.5 text-supply" />
               </div>
               <div>
-                <div className="text-[11px] text-text-muted">Your Deposits</div>
+                <div className="text-[11px] text-text-muted">Bonzo Deposits</div>
                 <div className="text-sm font-bold text-text-primary">
-                  {parseFloat(userTotal).toFixed(2)} HBAR
+                  {bonzo.isLoading ? '...' : '$0.00'}
                 </div>
               </div>
             </div>
-            {hasPosition && (
-              <a
-                href={hashscanAccountUrl(wallet.address!)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="p-1.5 rounded-[8px] hover:bg-surface transition-colors"
-              >
-                <ExternalLink className="w-3.5 h-3.5 text-text-muted" />
-              </a>
-            )}
-          </div>
-        </motion.div>
-
-        {/* Protocol TVL */}
-        <motion.div
-          initial={{ opacity: 0, x: 12 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.05 }}
-          className="glass-card px-3 py-3"
-        >
-          <div className="flex items-center gap-2">
-            <div className="rounded-full bg-badge-accent p-1.5">
-              <TrendingUp className="w-3.5 h-3.5 text-accent" />
-            </div>
-            <div>
-              <div className="text-[11px] text-text-muted">Protocol TVL</div>
-              <div className="text-sm font-bold text-text-primary">
-                {parseFloat(tvl).toFixed(2)} HBAR
-              </div>
-            </div>
-          </div>
-        </motion.div>
+          </motion.div>
+        )}
 
         {/* Active strategy */}
         {activeStrategy && activeStrategy.status === 'active' && (
@@ -189,19 +181,6 @@ export function PositionPanel({ activeStrategy }: PositionPanelProps) {
             </span>
           </div>
         </div>
-
-        {/* Contract link */}
-        {hasPosition && (
-          <a
-            href={hashscanContractUrl(process.env.NEXT_PUBLIC_VAULT_CONTRACT_ADDRESS || '')}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-center gap-1.5 text-[11px] text-accent hover:text-accent/80 transition-colors py-1.5"
-          >
-            <ExternalLink className="w-3 h-3" />
-            View contract on HashScan
-          </a>
-        )}
       </div>
     </div>
   );

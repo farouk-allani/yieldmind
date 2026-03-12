@@ -7,6 +7,7 @@ import Image from 'next/image';
 import { ChatInterface } from '@/components/chat/chat-interface';
 import { AgentStatusPanel } from '@/components/dashboard/agent-status';
 import { DecisionLogPanel } from '@/components/dashboard/decision-log';
+import { PositionPanel } from '@/components/dashboard/position-panel';
 import { ConnectWalletButton } from '@/components/wallet/connect-button';
 import { NetworkToggle } from '@/components/wallet/network-toggle';
 import { fetchAgentStatus } from '@/lib/api';
@@ -89,6 +90,8 @@ export default function AppPage() {
 
         {/* Dashboard sidebar */}
         <aside className="w-80 flex-shrink-0 overflow-y-auto bg-page p-4 space-y-6 hidden lg:block">
+          <PositionPanel activeStrategy={activeStrategy} />
+          <div className="border-t border-border-subtle" />
           <AgentStatusPanel agents={agents} />
           <div className="border-t border-border-subtle" />
           <DecisionLogPanel decisions={decisions} />

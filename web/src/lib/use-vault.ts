@@ -231,6 +231,166 @@ async function depositViaHederaSDK(
   }
 }
 
+// ── Withdraw via Hedera SDK (WalletConnect) ──
+
+/**
+ * Execute a Bonzo withdraw using the Hedera SDK + WalletConnect.
+ *
+ * For HBAR/WHBAR: approve aWHBAR for WHBARGateway, then call withdrawHBAR.
+ *   On-chain selector: 0x51f91fc0
+ *   Calldata: (address lendingPool, uint256 amount, uint16 referralCode, ???)
+ *
+ * For ERC-20: call LendingPool.withdraw(asset, amount, to)
+ */
+async function withdrawViaHederaSDK(
+  accountId: string,
+  aTokenAddress: string,
+  assetAddress: string,
+  rawAmount: bigint,
+  symbol: string,
+  isNativeHbar: boolean,
+  setStatus: (s: TxStatus) => void,
+): Promise<TxResult> {
+  const { ContractExecuteTransaction, ContractId, Hbar } =
+    await import('@hiero-ledger/sdk');
+  const { getHederaConnector, transactionToBase64String } =
+    await import('./hedera-wallet-connect');
+  const { getCurrentNetwork, getNetworkConfig } = await import('./network-config');
+
+  const connector = await getHederaConnector();
+  const network = getCurrentNetwork();
+  const mirrorNodeUrl = getNetworkConfig().mirrorNodeUrl;
+  const knownIds = BONZO_HEDERA_IDS[network] || BONZO_HEDERA_IDS.mainnet;
+  const signerAccountId = `hedera:${network}:${accountId}`;
+
+  // Resolve user's EVM address
+  let userEvmAddress = '';
+  try {
+    const res = await fetch(`${mirrorNodeUrl}/api/v1/accounts/${accountId}`);
+    if (res.ok) {
+      const data = await res.json() as { evm_address?: string };
+      userEvmAddress = data.evm_address || '';
+    }
+  } catch { /* ignore */ }
+
+  if (isNativeHbar) {
+    // ── HBAR withdraw via WHBARGateway ──
+    // Step 1: Approve aWHBAR for WHBARGateway to burn
+    setStatus('approving');
+    console.log(`[Vault/SDK] Approving aWHBAR for WHBARGateway to withdraw ${symbol}...`);
+
+    // Resolve aToken Hedera ID via Mirror Node
+    let aTokenHederaId = '';
+    try {
+      const aTokenClean = aTokenAddress.replace('0x', '').toLowerCase();
+      const res = await fetch(`${mirrorNodeUrl}/api/v1/contracts/${aTokenClean}`);
+      if (res.ok) {
+        const data = await res.json() as { contract_id?: string };
+        aTokenHederaId = data.contract_id || '';
+      }
+    } catch { /* ignore */ }
+
+    if (!aTokenHederaId) {
+      return { status: 'failed', txHash: null, error: 'Cannot resolve aToken contract ID' };
+    }
+
+    // Approve via ERC-20 approve(spender, amount) on aToken contract
+    // selector: 0x095ea7b3
+    const whbarGatewayEvm = 'a7e46f496b088a8f8ee35b74d7e58d6ce648ae64';
+    const spenderPadded = whbarGatewayEvm.padStart(64, '0');
+    const amountHex = rawAmount.toString(16).padStart(64, '0');
+    const approveCallData = Buffer.from(
+      '095ea7b3' + spenderPadded + amountHex,
+      'hex'
+    );
+
+    const approveTx = new ContractExecuteTransaction()
+      .setContractId(ContractId.fromString(aTokenHederaId))
+      .setGas(200_000)
+      .setFunctionParameters(approveCallData)
+      .setMaxTransactionFee(new Hbar(5));
+
+    const approveResult = await connector.signAndExecuteTransaction({
+      signerAccountId,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      transactionList: transactionToBase64String(approveTx as any),
+    });
+    console.log('[Vault/SDK] aToken approve result:', approveResult);
+
+    // Step 2: Call WHBARGateway with on-chain selector 0x51f91fc0
+    // Calldata layout: (address lendingPool, uint256 amount, uint256 referralCode?, uint256 zero?)
+    setStatus('signing');
+    console.log(`[Vault/SDK] Withdrawing ${symbol} via WHBARGateway (0x51f91fc0)...`);
+
+    const lendingPoolEvmPadded = (knownIds.lendingPoolEvm || '').padStart(64, '0');
+    const referralCode = ''.padStart(62, '0') + '02'; // referral code = 2 (matching on-chain txs)
+    const zeroPadded = ''.padStart(64, '0');
+
+    const withdrawCallData = Buffer.from(
+      '51f91fc0' + lendingPoolEvmPadded + amountHex + referralCode + zeroPadded,
+      'hex'
+    );
+
+    const withdrawTx = new ContractExecuteTransaction()
+      .setContractId(ContractId.fromString(knownIds.whbarGateway))
+      .setGas(2_000_000)
+      .setFunctionParameters(withdrawCallData)
+      .setMaxTransactionFee(new Hbar(10));
+
+    setStatus('confirming');
+    const result = await connector.signAndExecuteTransaction({
+      signerAccountId,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      transactionList: transactionToBase64String(withdrawTx as any),
+    });
+
+    console.log('[Vault/SDK] WHBARGateway withdraw result:', result);
+    const txId = (result as { transactionId?: string })?.transactionId || null;
+    setStatus('confirmed');
+    return { status: 'confirmed', txHash: txId, error: null };
+
+  } else {
+    // ── ERC-20 withdraw via LendingPool.withdraw(asset, amount, to) ──
+    // selector: 0x69328dec
+    setStatus('signing');
+    console.log(`[Vault/SDK] Withdrawing ${symbol} from Bonzo LendingPool...`);
+
+    const assetPadded = assetAddress.replace('0x', '').toLowerCase().padStart(64, '0');
+    const amountHex = rawAmount.toString(16).padStart(64, '0');
+
+    let toPadded: string;
+    if (userEvmAddress) {
+      toPadded = userEvmAddress.replace('0x', '').toLowerCase().padStart(64, '0');
+    } else {
+      const accountNum = parseInt(accountId.split('.')[2], 10);
+      toPadded = accountNum.toString(16).padStart(64, '0');
+    }
+
+    const withdrawCallData = Buffer.from(
+      '69328dec' + assetPadded + amountHex + toPadded,
+      'hex'
+    );
+
+    const withdrawTx = new ContractExecuteTransaction()
+      .setContractId(ContractId.fromString(knownIds.lendingPool))
+      .setGas(1_500_000)
+      .setFunctionParameters(withdrawCallData)
+      .setMaxTransactionFee(new Hbar(10));
+
+    setStatus('confirming');
+    const result = await connector.signAndExecuteTransaction({
+      signerAccountId,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      transactionList: transactionToBase64String(withdrawTx as any),
+    });
+
+    console.log('[Vault/SDK] LendingPool withdraw result:', result);
+    const txId = (result as { transactionId?: string })?.transactionId || null;
+    setStatus('confirmed');
+    return { status: 'confirmed', txHash: txId, error: null };
+  }
+}
+
 // ── Main hook ──
 
 export function useVault() {
@@ -497,13 +657,56 @@ export function useVault() {
 
   /**
    * Withdraw from Bonzo LendingPool (or YieldMindVault as fallback).
+   *
+   * For Bonzo mainnet withdrawals:
+   * - Pass `assetAddress` (underlying token) and `aTokenAddress` (aToken for approval)
+   * - HBAR/WHBAR goes through WHBARGateway, ERC-20 goes through LendingPool.withdraw
+   *
+   * @param strategyId - Strategy identifier (used for YieldMindVault fallback)
+   * @param amount - Human-readable amount to withdraw
+   * @param assetAddress - Underlying asset EVM address (e.g., WHBAR address)
+   * @param symbol - Token symbol (HBAR, WHBAR, USDC, etc.)
+   * @param decimals - Token decimals (8 for HBAR/WHBAR, 6 for USDC, etc.)
+   * @param aTokenAddress - Bonzo aToken EVM address (needed for WHBARGateway approval)
    */
   const withdraw = useCallback(
     async (
       strategyId: string,
-      amountHbar: number,
-      assetAddress?: string
+      amount: number,
+      assetAddress?: string,
+      symbol: string = 'HBAR',
+      decimals: number = 8,
+      aTokenAddress?: string,
     ): Promise<TxResult> => {
+      // ── WalletConnect path (HashPack / Kabila) ──
+      if (isWalletConnect && accountId && assetAddress && aTokenAddress) {
+        const isHbar = symbol === 'HBAR' || symbol === 'WHBAR';
+        const rawAmount = BigInt(Math.round(amount * Math.pow(10, decimals)));
+
+        try {
+          setWithdrawStatus('approving');
+          return await withdrawViaHederaSDK(
+            accountId,
+            aTokenAddress,
+            assetAddress,
+            rawAmount,
+            symbol,
+            isHbar,
+            setWithdrawStatus,
+          );
+        } catch (err: unknown) {
+          setWithdrawStatus('failed');
+          const error = err as { message?: string };
+          console.error('[Vault/SDK] Withdraw error:', error);
+          return {
+            status: 'failed',
+            txHash: null,
+            error: error.message || 'WalletConnect withdraw failed',
+          };
+        }
+      }
+
+      // ── MetaMask path (ethers.js) ──
       if (!provider || !address) {
         return { status: 'failed', txHash: null, error: 'Wallet not connected' };
       }
@@ -519,12 +722,12 @@ export function useVault() {
 
         if (lendingPoolAddress && assetAddress) {
           const contract = new Contract(lendingPoolAddress, BONZO_LENDING_POOL_ABI, signer);
-          const amountRaw = BigInt(Math.round(amountHbar * 1e8));
+          const amountRaw = BigInt(Math.round(amount * Math.pow(10, decimals)));
           tx = await contract.withdraw(assetAddress, amountRaw, address);
         } else if (yieldVaultAddress) {
           const contract = new Contract(yieldVaultAddress, VAULT_ABI, signer);
           const strategyIdHash = keccak256(toUtf8Bytes(strategyId));
-          const amountTinybars = BigInt(Math.round(amountHbar * 1e8));
+          const amountTinybars = BigInt(Math.round(amount * 1e8));
           tx = await contract.withdraw(strategyIdHash, amountTinybars);
         } else {
           setWithdrawStatus('failed');
@@ -552,7 +755,7 @@ export function useVault() {
         return { status: 'failed', txHash: null, error: error.message || 'Unknown error' };
       }
     },
-    [provider, address]
+    [provider, address, accountId, isWalletConnect]
   );
 
   /**

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ArrowLeft,
   RefreshCw,
@@ -21,6 +21,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useWallet } from '@/lib/wallet-context';
 import { useVault } from '@/lib/use-vault';
+import { useBonzoPositions, type BonzoPosition } from '@/lib/use-bonzo-positions';
 import { ConnectWalletButton } from '@/components/wallet/connect-button';
 import { NetworkToggle } from '@/components/wallet/network-toggle';
 import { getVaultAddress } from '@/lib/vault-abi';
@@ -29,6 +30,7 @@ import { getNetworkConfig, hashscanContractUrl, hashscanAccountUrl, hashscanTxUr
 export default function PortfolioPage() {
   const wallet = useWallet();
   const vault = useVault();
+  const bonzo = useBonzoPositions();
   const vaultAddress = getVaultAddress();
 
   const [userTotal, setUserTotal] = useState<string>('0');
@@ -43,18 +45,31 @@ export default function PortfolioPage() {
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawError, setWithdrawError] = useState<string | null>(null);
   const [withdrawTxHash, setWithdrawTxHash] = useState<string | null>(null);
+  // Bonzo position being withdrawn from (null = legacy YieldMindVault withdraw)
+  const [withdrawPosition, setWithdrawPosition] = useState<BonzoPosition | null>(null);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
+  // Keep stable refs to avoid re-triggering useCallback on every render
+  const bonzoRefreshRef = useRef(bonzo.refresh);
+  bonzoRefreshRef.current = bonzo.refresh;
+  const vaultRef = useRef(vault);
+  vaultRef.current = vault;
+
+  // Guard against concurrent refresh calls
+  const refreshingRef = useRef(false);
+
   const refresh = useCallback(async () => {
-    if (!wallet.isConnected) return;
+    if (!wallet.isConnected || refreshingRef.current) return;
+    refreshingRef.current = true;
     setIsRefreshing(true);
     try {
       const [total, totalLocked] = await Promise.all([
-        vault.getUserTotal(),
-        vault.getTVL(),
+        vaultRef.current.getUserTotal(),
+        vaultRef.current.getTVL(),
+        bonzoRefreshRef.current(),
       ]);
       setUserTotal(total);
       setTvl(totalLocked);
@@ -62,8 +77,9 @@ export default function PortfolioPage() {
       // silently handle
     } finally {
       setIsRefreshing(false);
+      refreshingRef.current = false;
     }
-  }, [wallet.isConnected, vault]);
+  }, [wallet.isConnected]);
 
   useEffect(() => {
     if (mounted && wallet.isConnected) {
@@ -98,14 +114,32 @@ export default function PortfolioPage() {
       setWithdrawError('Enter a valid amount');
       return;
     }
-    if (amount > userDeposited) {
-      setWithdrawError(`Maximum available: ${userDeposited.toFixed(2)} HBAR`);
-      return;
-    }
 
     setWithdrawError(null);
-    // Use a default strategy ID — in a full implementation this would be per-strategy
-    const result = await vault.withdraw('default-strategy', amount);
+
+    let result;
+    if (withdrawPosition) {
+      // Bonzo mainnet withdraw
+      if (amount > withdrawPosition.balance) {
+        setWithdrawError(`Maximum available: ${withdrawPosition.balance.toFixed(4)} ${withdrawPosition.displaySymbol}`);
+        return;
+      }
+      result = await vault.withdraw(
+        'bonzo-withdraw',
+        amount,
+        withdrawPosition.assetAddress,
+        withdrawPosition.symbol,
+        withdrawPosition.decimals,
+        withdrawPosition.aTokenAddress,
+      );
+    } else {
+      // Legacy YieldMindVault withdraw
+      if (amount > userDeposited) {
+        setWithdrawError(`Maximum available: ${userDeposited.toFixed(2)} HBAR`);
+        return;
+      }
+      result = await vault.withdraw('default-strategy', amount);
+    }
 
     if (result.status === 'confirmed' && result.txHash) {
       setWithdrawTxHash(result.txHash);
@@ -114,6 +148,14 @@ export default function PortfolioPage() {
     } else if (result.error) {
       setWithdrawError(result.error);
     }
+  };
+
+  const openBonzoWithdraw = (position: BonzoPosition) => {
+    setWithdrawPosition(position);
+    setWithdrawAmount('');
+    setWithdrawError(null);
+    setWithdrawTxHash(null);
+    setShowWithdrawModal(true);
   };
 
   const handleEmergencyWithdraw = async () => {
@@ -135,6 +177,7 @@ export default function PortfolioPage() {
     setWithdrawAmount('');
     setWithdrawError(null);
     setWithdrawTxHash(null);
+    setWithdrawPosition(null);
     vault.resetStatus();
   };
 
@@ -222,9 +265,17 @@ export default function PortfolioPage() {
                 iconColor="text-supply"
                 iconBg="bg-badge-supply"
                 label="Your Deposits"
-                value={vaultAddress ? `${userDeposited.toFixed(2)} HBAR` : 'N/A'}
+                value={
+                  bonzo.positions.length > 0
+                    ? `$${bonzo.totalUsdValue.toFixed(2)}`
+                    : vaultAddress
+                    ? `${userDeposited.toFixed(2)} HBAR`
+                    : bonzo.isLoading ? '...' : '$0.00'
+                }
                 subtext={
-                  !vaultAddress
+                  bonzo.positions.length > 0
+                    ? `${bonzo.positions.length} position${bonzo.positions.length > 1 ? 's' : ''} on Bonzo`
+                    : !vaultAddress
                     ? 'Deposits go directly to Bonzo on mainnet'
                     : userDeposited > 0
                     ? `${shareOfTvl}% of protocol TVL`
@@ -236,9 +287,21 @@ export default function PortfolioPage() {
                 icon={TrendingUp}
                 iconColor="text-accent"
                 iconBg="bg-badge-accent"
-                label="Protocol TVL"
-                value={vaultAddress ? `${protocolTvl.toFixed(2)} HBAR` : 'N/A'}
-                subtext={vaultAddress ? 'Total value locked in vault' : 'Bonzo LendingPool handles TVL on mainnet'}
+                label={isMainnet ? 'Earning APY' : 'Protocol TVL'}
+                value={
+                  bonzo.positions.length > 0
+                    ? `${bonzo.positions[0].supplyApy.toFixed(2)}%`
+                    : vaultAddress
+                    ? `${protocolTvl.toFixed(2)} HBAR`
+                    : 'N/A'
+                }
+                subtext={
+                  bonzo.positions.length > 0
+                    ? `${bonzo.positions[0].displaySymbol} Supply Pool`
+                    : vaultAddress
+                    ? 'Total value locked in vault'
+                    : 'Bonzo LendingPool handles TVL on mainnet'
+                }
                 delay={0.05}
               />
               <OverviewCard
@@ -246,15 +309,15 @@ export default function PortfolioPage() {
                 iconColor="text-danger"
                 iconBg="bg-badge-danger"
                 label="Sentinel Monitoring"
-                value={userDeposited > 0 ? 'Active' : 'Inactive'}
+                value={bonzo.positions.length > 0 || userDeposited > 0 ? 'Active' : 'Inactive'}
                 subtext={
-                  userDeposited > 0
+                  bonzo.positions.length > 0 || userDeposited > 0
                     ? 'Watching prices, volatility & liquidity'
                     : 'Deposit to activate monitoring'
                 }
                 delay={0.1}
                 valueColor={
-                  userDeposited > 0 ? 'text-supply' : 'text-text-muted'
+                  bonzo.positions.length > 0 || userDeposited > 0 ? 'text-supply' : 'text-text-muted'
                 }
               />
               <OverviewCard
@@ -362,8 +425,116 @@ export default function PortfolioPage() {
               </motion.div>
             )}
 
-            {/* Mainnet: Bonzo Direct deposit flow */}
-            {isMainnet && (
+            {/* Mainnet: Bonzo Positions table */}
+            {isMainnet && bonzo.positions.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="glass-card overflow-hidden mb-8"
+              >
+                <div className="px-5 py-4 border-b border-border-subtle flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-text-primary">
+                      Bonzo Positions
+                    </h3>
+                    <p className="text-[11px] text-text-muted mt-0.5">
+                      Your active deposits in Bonzo lending pools on mainnet
+                    </p>
+                  </div>
+                  <a
+                    href={hashscanAccountUrl(wallet.accountId || wallet.address || '')}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 text-[11px] text-accent hover:text-accent/80 transition-colors"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    View on HashScan
+                  </a>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border-subtle">
+                        <th className="text-left text-[11px] font-medium text-text-muted uppercase tracking-wider px-5 py-3">
+                          Asset
+                        </th>
+                        <th className="text-right text-[11px] font-medium text-text-muted uppercase tracking-wider px-5 py-3">
+                          Deposited
+                        </th>
+                        <th className="text-right text-[11px] font-medium text-text-muted uppercase tracking-wider px-5 py-3">
+                          Value
+                        </th>
+                        <th className="text-right text-[11px] font-medium text-text-muted uppercase tracking-wider px-5 py-3">
+                          Supply APY
+                        </th>
+                        <th className="text-right text-[11px] font-medium text-text-muted uppercase tracking-wider px-5 py-3">
+                          Status
+                        </th>
+                        <th className="text-right text-[11px] font-medium text-text-muted uppercase tracking-wider px-5 py-3">
+                          Action
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bonzo.positions.map((pos) => (
+                        <tr key={pos.symbol} className="border-b border-border-subtle hover:bg-surface/50 transition-colors">
+                          <td className="px-5 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-supply/10 flex items-center justify-center text-xs font-bold text-supply">
+                                {pos.displaySymbol.slice(0, 2)}
+                              </div>
+                              <div>
+                                <div className="font-medium text-text-primary">
+                                  {pos.displaySymbol}
+                                </div>
+                                <div className="text-[11px] text-text-muted">
+                                  Bonzo Supply Pool
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-5 py-4 text-right">
+                            <div className="font-bold text-text-primary">
+                              {pos.balance.toFixed(pos.decimals <= 6 ? 2 : 4)}
+                            </div>
+                            <div className="text-[11px] text-text-muted">{pos.displaySymbol}</div>
+                          </td>
+                          <td className="px-5 py-4 text-right">
+                            <span className="font-medium text-text-primary">
+                              ${pos.usdValue.toFixed(2)}
+                            </span>
+                          </td>
+                          <td className="px-5 py-4 text-right">
+                            <span className="text-supply font-medium">
+                              {pos.supplyApy.toFixed(2)}%
+                            </span>
+                          </td>
+                          <td className="px-5 py-4 text-right">
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-supply/10 text-supply text-[11px] font-medium">
+                              <span className="w-1.5 h-1.5 rounded-full bg-supply animate-pulse" />
+                              Earning
+                            </span>
+                          </td>
+                          <td className="px-5 py-4 text-right">
+                            <button
+                              onClick={() => openBonzoWithdraw(pos)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] bg-surface border border-border-subtle text-[11px] text-text-secondary font-medium hover:bg-surface-hover hover:text-text-primary transition-colors"
+                            >
+                              <ArrowDownToLine className="w-3 h-3" />
+                              Withdraw
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Mainnet: Bonzo Direct deposit flow (when no positions) */}
+            {isMainnet && bonzo.positions.length === 0 && !bonzo.isLoading && (
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -391,8 +562,8 @@ export default function PortfolioPage() {
                     <FlowStep
                       icon={<img src="/bonzo.webp" alt="Bonzo" className="w-5 h-5 rounded-full" />}
                       title="Bonzo Lending Pools"
-                      subtitle="Direct deposit via LendingPool"
-                      detail="HBAR via WETHGateway, ERC-20 via approve + deposit"
+                      subtitle="Direct deposit via WHBARGateway"
+                      detail="HBAR via WHBARGateway, ERC-20 via approve + deposit"
                       color="border-supply/30"
                       highlight
                     />
@@ -776,11 +947,11 @@ export default function PortfolioPage() {
         )}
       </div>
 
-      {/* Withdraw Modal — only when vault exists */}
+      {/* Withdraw Modal */}
       <AnimatePresence>
-        {showWithdrawModal && vaultAddress && (
+        {showWithdrawModal && (vaultAddress || withdrawPosition) && (
           <WithdrawModal
-            userDeposited={userDeposited}
+            userDeposited={withdrawPosition ? withdrawPosition.balance : userDeposited}
             withdrawAmount={withdrawAmount}
             setWithdrawAmount={setWithdrawAmount}
             withdrawStatus={vault.withdrawStatus}
@@ -789,6 +960,7 @@ export default function PortfolioPage() {
             onWithdraw={handleWithdraw}
             onEmergencyWithdraw={handleEmergencyWithdraw}
             onClose={closeWithdrawModal}
+            bonzoPosition={withdrawPosition}
           />
         )}
       </AnimatePresence>
@@ -808,7 +980,7 @@ function NotConnectedState() {
         Connect Your Wallet
       </h2>
       <p className="text-sm text-text-muted text-center max-w-md mb-6">
-        Connect your MetaMask wallet to view your positions, deposits, and
+        Connect your wallet to view your positions, deposits, and
         strategy performance on the YieldMind protocol.
       </p>
       <ConnectWalletButton />
@@ -963,6 +1135,7 @@ function WithdrawModal({
   onWithdraw,
   onEmergencyWithdraw,
   onClose,
+  bonzoPosition,
 }: {
   userDeposited: number;
   withdrawAmount: string;
@@ -973,8 +1146,12 @@ function WithdrawModal({
   onWithdraw: () => void;
   onEmergencyWithdraw: () => void;
   onClose: () => void;
+  bonzoPosition?: BonzoPosition | null;
 }) {
-  const isProcessing = withdrawStatus === 'signing' || withdrawStatus === 'confirming';
+  const isBonzo = !!bonzoPosition;
+  const displaySymbol = bonzoPosition?.displaySymbol || 'HBAR';
+  const displayDecimals = bonzoPosition && bonzoPosition.decimals <= 6 ? 2 : 4;
+  const isProcessing = withdrawStatus === 'approving' || withdrawStatus === 'signing' || withdrawStatus === 'confirming';
 
   return (
     <>
@@ -998,10 +1175,12 @@ function WithdrawModal({
           {/* Header */}
           <div className="px-5 py-4 border-b border-border-subtle">
             <h2 className="text-base font-bold text-text-primary">
-              Withdraw Funds
+              Withdraw {displaySymbol}
             </h2>
             <p className="text-[11px] text-text-muted mt-0.5">
-              Withdraw HBAR from the YieldMindVault contract
+              {isBonzo
+                ? `Withdraw ${displaySymbol} from Bonzo lending pool`
+                : 'Withdraw HBAR from the YieldMindVault contract'}
             </p>
           </div>
 
@@ -1037,15 +1216,22 @@ function WithdrawModal({
                     Available to Withdraw
                   </div>
                   <div className="text-lg font-bold text-text-primary flex items-center gap-2">
-                    <img src="/hbar.webp" alt="HBAR" className="w-5 h-5 rounded-full" />
-                    {userDeposited.toFixed(2)} HBAR
+                    <div className="w-5 h-5 rounded-full bg-supply/10 flex items-center justify-center text-[9px] font-bold text-supply">
+                      {displaySymbol.slice(0, 2)}
+                    </div>
+                    {userDeposited.toFixed(displayDecimals)} {displaySymbol}
                   </div>
+                  {bonzoPosition && (
+                    <div className="text-[11px] text-text-muted mt-1">
+                      ≈ ${bonzoPosition.usdValue.toFixed(2)} · {bonzoPosition.supplyApy.toFixed(2)}% APY
+                    </div>
+                  )}
                 </div>
 
                 {/* Amount input */}
                 <div>
                   <label className="text-[11px] text-text-muted uppercase tracking-wide block mb-1.5">
-                    Withdraw Amount (HBAR)
+                    Withdraw Amount ({displaySymbol})
                   </label>
                   <div className="flex gap-2">
                     <input
@@ -1070,9 +1256,11 @@ function WithdrawModal({
                 {isProcessing && (
                   <div className="flex items-center gap-2 py-2 px-3 rounded-[8px] bg-accent/10 text-sm text-accent">
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    {withdrawStatus === 'signing'
-                      ? 'Waiting for MetaMask signature...'
-                      : 'Confirming on Hedera...'}
+                    {withdrawStatus === 'approving'
+                      ? `Approving ${displaySymbol} for withdrawal...`
+                      : withdrawStatus === 'signing'
+                        ? 'Waiting for wallet signature...'
+                        : 'Confirming on Hedera...'}
                   </div>
                 )}
 
@@ -1092,22 +1280,25 @@ function WithdrawModal({
                     className="w-full flex items-center justify-center gap-2 h-10 rounded-[8px] bg-accent text-white text-sm font-medium hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <ArrowDownToLine className="w-4 h-4" />
-                    {isProcessing ? 'Processing...' : 'Withdraw'}
+                    {isProcessing ? 'Processing...' : `Withdraw ${displaySymbol}`}
                   </button>
 
-                  <button
-                    onClick={onEmergencyWithdraw}
-                    disabled={isProcessing}
-                    className="w-full flex items-center justify-center gap-2 h-10 rounded-[8px] bg-danger/10 border border-danger/20 text-danger text-sm font-medium hover:bg-danger/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    <LogOut className="w-4 h-4" />
-                    Emergency Withdraw All
-                  </button>
+                  {!isBonzo && (
+                    <button
+                      onClick={onEmergencyWithdraw}
+                      disabled={isProcessing}
+                      className="w-full flex items-center justify-center gap-2 h-10 rounded-[8px] bg-danger/10 border border-danger/20 text-danger text-sm font-medium hover:bg-danger/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      Emergency Withdraw All
+                    </button>
+                  )}
                 </div>
 
                 <p className="text-[10px] text-text-muted text-center">
-                  Emergency withdraw returns ALL deposited HBAR across all strategies.
-                  Regular withdraw lets you specify an amount.
+                  {isBonzo
+                    ? `Withdraw ${displaySymbol} from Bonzo lending pool back to your wallet.`
+                    : 'Emergency withdraw returns ALL deposited HBAR across all strategies. Regular withdraw lets you specify an amount.'}
                 </p>
 
                 {/* Cancel */}
