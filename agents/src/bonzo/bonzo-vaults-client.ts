@@ -1,45 +1,79 @@
 import type { BonzoVaultInfo, RiskTolerance } from '../types/index.js';
-import {
-  BONZO_TOKENS,
-  SINGLE_ASSET_DEX_VAULTS,
-  DUAL_ASSET_DEX_VAULTS,
-  LEVERAGED_LST_VAULTS,
-  getToken,
-} from '../config/bonzo-contracts.js';
-import type {
-  BonzoVaultConfig,
-  BonzoDualVaultConfig,
-  BonzoLSTVaultConfig,
-  BonzoVaultVolatility,
-} from '../config/bonzo-contracts.js';
-import { getBonzoNetworkConfig } from '../config/network.js';
-import { displaySymbol } from './vault-client.js';
+
+// ── Bonzo Vaults API response types ─────────────────────────────────
+// Source: https://mainnet-vaults.bonzo.finance/v1/api/vaults
+
+interface BonzoVaultsApiAsset {
+  symbol: string;
+  address: string;
+  contractId: string;
+  decimals: number;
+  price: string;
+}
+
+interface BonzoVaultsApiVault {
+  id: string;
+  name: string;
+  protocols: string[];
+  strategyType: string;
+  network: string;
+  assets: BonzoVaultsApiAsset[];
+  apy: string;
+  totalApy: string;
+  harvestApy7d: string;
+  harvestApy30d: string;
+  tvl: string;
+  contractAddress: string;
+  strategyAddress: string;
+  contractId: string;
+  strategyContractId: string;
+  vaultType: string;
+  isHidden: boolean;
+  lastHarvest: string;
+  safetyScore: number;
+  description: string;
+  fees: {
+    deposit: number;
+    withdrawal: number;
+    performance: number;
+  };
+  tabs?: {
+    risks?: Array<{
+      complexity: string;
+      volatility: string;
+      risk: string;
+    }>;
+  };
+}
+
+interface BonzoVaultsApiResponse {
+  summary: {
+    totalValueLocked: string;
+    vaultCount: number;
+    averageApy: string;
+  };
+  vaults: BonzoVaultsApiVault[];
+}
+
+const BONZO_VAULTS_API = 'https://mainnet-vaults.bonzo.finance/v1/api/vaults';
 
 /**
- * BonzoVaultsClient — Fetches data for Bonzo Vaults (Single/Dual Asset DEX, Leveraged LST).
+ * BonzoVaultsClient — Fetches live data from the Bonzo Vaults API.
  *
  * Unlike BonzoVaultClient (which handles Bonzo Lend/LendingPool),
  * this client handles the auto-compounding vault products that use
  * concentrated liquidity on SaucerSwap V2.
  *
- * Data sources:
- * - Vault addresses: bonzo-contracts.ts (verified from Bonzo docs)
- * - On-chain data: Hedera JSON-RPC for balance/totalSupply/pricePerShare
- * - Token decimals: bonzo-contracts.ts (verified from Bonzo Data API)
+ * Data source: https://mainnet-vaults.bonzo.finance/v1/api/vaults
+ * Returns live APY (from harvest history), TVL, assets, and vault metadata.
  */
 export class BonzoVaultsClient {
-  private readonly rpcUrl: string;
   private cachedVaults: BonzoVaultInfo[] | null = null;
   private cacheExpiry = 0;
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-  constructor() {
-    const config = getBonzoNetworkConfig();
-    this.rpcUrl = config.rpcUrl;
-  }
-
   /**
-   * Get all available Bonzo Vaults with on-chain data.
+   * Get all available Bonzo Vaults with live API data.
    */
   async getVaults(): Promise<BonzoVaultInfo[]> {
     if (this.cachedVaults && Date.now() < this.cacheExpiry) {
@@ -47,10 +81,10 @@ export class BonzoVaultsClient {
     }
 
     try {
-      const vaults = await this.buildVaultInfos();
+      const vaults = await this.fetchVaultsFromApi();
       this.cachedVaults = vaults;
       this.cacheExpiry = Date.now() + this.CACHE_TTL;
-      console.log(`[BonzoVaults] Built ${vaults.length} vault entries`);
+      console.log(`[BonzoVaults] Fetched ${vaults.length} vaults from Bonzo Vaults API`);
       return vaults;
     } catch (error) {
       console.error(
@@ -62,139 +96,101 @@ export class BonzoVaultsClient {
   }
 
   /**
-   * Build vault info for all deployed vaults.
-   * Fetches on-chain totalSupply for TVL estimation.
+   * Fetch live vault data from the Bonzo Vaults API.
    */
-  private async buildVaultInfos(): Promise<BonzoVaultInfo[]> {
-    const vaults: BonzoVaultInfo[] = [];
-
-    // Single Asset DEX vaults
-    for (const vault of SINGLE_ASSET_DEX_VAULTS) {
-      const info = await this.buildSingleAssetVault(vault);
-      if (info) vaults.push(info);
+  private async fetchVaultsFromApi(): Promise<BonzoVaultInfo[]> {
+    const response = await fetch(BONZO_VAULTS_API);
+    if (!response.ok) {
+      throw new Error(`Bonzo Vaults API returned ${response.status}`);
     }
 
-    // Dual Asset DEX vaults
-    for (const vault of DUAL_ASSET_DEX_VAULTS) {
-      const info = this.buildDualAssetVault(vault);
-      if (info) vaults.push(info);
-    }
+    const data = (await response.json()) as BonzoVaultsApiResponse;
+    console.log(
+      `[BonzoVaults] API returned ${data.vaults.length} vaults, ` +
+      `TVL $${parseFloat(data.summary.totalValueLocked).toFixed(0)}, ` +
+      `avg APY ${data.summary.averageApy}%`
+    );
 
-    // Leveraged LST vaults
-    for (const vault of LEVERAGED_LST_VAULTS) {
-      const info = this.buildLSTVault(vault);
-      if (info) vaults.push(info);
-    }
-
-    return vaults;
+    return data.vaults
+      .filter((v) => !v.isHidden)
+      .map((v) => this.mapApiVault(v))
+      .filter((v): v is BonzoVaultInfo => v !== null);
   }
 
-  private async buildSingleAssetVault(
-    config: BonzoVaultConfig
-  ): Promise<BonzoVaultInfo | null> {
-    const token = getToken(config.depositToken);
-    if (!token) return null;
+  /**
+   * Map a Bonzo Vaults API vault to our BonzoVaultInfo type.
+   */
+  private mapApiVault(vault: BonzoVaultsApiVault): BonzoVaultInfo | null {
+    if (vault.assets.length === 0) return null;
 
-    const totalSupply = await this.fetchTotalSupply(config.vaultAddress);
+    const asset0 = vault.assets[0];
+    const asset1 = vault.assets[1];
+    const isDualAsset = vault.assets.length >= 2;
 
-    return {
-      vaultAddress: config.vaultAddress,
-      strategyAddress: config.strategyAddress,
-      type: 'single-asset-dex',
-      name: config.name,
-      depositToken: displaySymbol(config.depositToken),
-      pairedToken: displaySymbol(config.pairedToken),
-      depositDecimals: token.decimals,
-      apy: 0, // fetched live from vault or estimated
-      tvl: totalSupply,
-      riskLevel: this.volatilityToRisk(config.volatility),
-      volatility: config.volatility,
-    };
-  }
+    // Determine vault type from the API data
+    const type = this.inferVaultType(vault);
 
-  private buildDualAssetVault(
-    config: BonzoDualVaultConfig
-  ): BonzoVaultInfo | null {
-    const token0 = getToken(config.token0);
-    if (!token0) return null;
+    // Build deposit token display
+    const depositToken = isDualAsset
+      ? `${asset0.symbol}-${asset1.symbol}`
+      : asset0.symbol;
 
-    return {
-      vaultAddress: config.vaultAddress,
-      strategyAddress: config.strategyAddress,
-      type: 'dual-asset-dex',
-      name: config.name,
-      depositToken: `${displaySymbol(config.token0)}-${displaySymbol(config.token1)}`,
-      pairedToken: undefined,
-      depositDecimals: token0.decimals,
-      apy: 0,
-      tvl: 0,
-      riskLevel: 'moderate',
-      volatility: 'medium-narrow',
-    };
-  }
+    // Parse APY — the API returns it as a percentage string (e.g. "57.78")
+    const apy = parseFloat(vault.apy) || 0;
 
-  private buildLSTVault(
-    config: BonzoLSTVaultConfig
-  ): BonzoVaultInfo | null {
-    const token = getToken(config.depositToken);
-    if (!token) return null;
+    // Parse TVL in USD
+    const tvl = parseFloat(vault.tvl) || 0;
+
+    // Risk from API tabs.risks or infer from volatility
+    const riskLevel = this.inferRisk(vault);
+
+    // Volatility from API
+    const volatility = vault.tabs?.risks?.[0]?.volatility || 'medium';
 
     return {
-      vaultAddress: config.vaultAddress,
-      strategyAddress: config.strategyAddress,
-      type: 'leveraged-lst',
-      name: config.name,
-      depositToken: displaySymbol(config.depositToken),
-      depositDecimals: token.decimals,
-      apy: 0,
-      tvl: 0,
-      riskLevel: 'moderate',
-      volatility: 'medium-narrow',
+      vaultAddress: vault.contractAddress,
+      strategyAddress: vault.strategyAddress,
+      type,
+      name: vault.name,
+      depositToken,
+      pairedToken: isDualAsset ? asset1.symbol : undefined,
+      depositDecimals: asset0.decimals,
+      apy,
+      tvl,
+      riskLevel,
+      volatility,
     };
   }
 
   /**
-   * Fetch totalSupply() from a vault contract via JSON-RPC.
-   * Used to estimate TVL.
+   * Infer vault type from API data.
+   * All current Bonzo Vaults are concentrated liquidity (dual asset).
    */
-  private async fetchTotalSupply(vaultAddress: string): Promise<number> {
-    try {
-      // totalSupply() selector = 0x18160ddd
-      const response = await fetch(this.rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'eth_call',
-          params: [{ to: vaultAddress, data: '0x18160ddd' }, 'latest'],
-        }),
-      });
+  private inferVaultType(vault: BonzoVaultsApiVault): 'single-asset-dex' | 'dual-asset-dex' | 'leveraged-lst' {
+    // All current Bonzo Vaults are dual-asset concentrated liquidity
+    if (vault.assets.length >= 2) {
+      return 'dual-asset-dex';
+    }
+    return 'single-asset-dex';
+  }
 
-      const data = await response.json() as { result?: string };
-      if (data.result && data.result !== '0x') {
-        return parseInt(data.result, 16);
+  /**
+   * Infer risk level from the API's safety/risk data.
+   */
+  private inferRisk(vault: BonzoVaultsApiVault): RiskTolerance {
+    const riskInfo = vault.tabs?.risks?.[0];
+    if (riskInfo) {
+      switch (riskInfo.risk) {
+        case 'low': return 'conservative';
+        case 'medium': return 'moderate';
+        case 'high': return 'aggressive';
       }
-      return 0;
-    } catch {
-      return 0;
     }
-  }
 
-  /**
-   * Map vault volatility classification to risk level.
-   */
-  private volatilityToRisk(volatility: BonzoVaultVolatility): RiskTolerance {
-    switch (volatility) {
-      case 'low-ultra-tight':
-        return 'conservative';
-      case 'medium-narrow':
-        return 'moderate';
-      case 'high-medium':
-      case 'high-wide':
-        return 'aggressive';
-      default:
-        return 'moderate';
-    }
+    // Fallback: higher APY = higher risk
+    const apy = parseFloat(vault.apy) || 0;
+    if (apy > 30) return 'aggressive';
+    if (apy > 10) return 'moderate';
+    return 'conservative';
   }
 }
