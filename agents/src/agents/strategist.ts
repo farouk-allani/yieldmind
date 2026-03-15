@@ -159,9 +159,9 @@ export class StrategistAgent extends BaseAgent {
         decimals: bestVault.depositDecimals,
         vaultName: bestVault.name,
         allocation: vaultPct,
-        expectedApy: 0, // Vault APY is variable from trading fees
+        expectedApy: bestVault.apy * (vaultPct / 100),
         riskLevel: bestVault.riskLevel,
-        reasoning: `Allocated ${vaultPct}% to Bonzo Vault — ${bestVault.depositToken}${bestVault.pairedToken ? '/' + bestVault.pairedToken : ''} (${bestVault.type}), auto-compounding concentrated liquidity on SaucerSwap`,
+        reasoning: `Allocated ${vaultPct}% to Bonzo Vault — ${bestVault.depositToken}${bestVault.pairedToken ? '/' + bestVault.pairedToken : ''} (${bestVault.type}) at ${bestVault.apy.toFixed(1)}% APY, auto-compounding concentrated liquidity on SaucerSwap`,
         productType: 'bonzo-vault',
         vaultType: bestVault.type,
       });
@@ -173,7 +173,8 @@ export class StrategistAgent extends BaseAgent {
         const firstVaultPct = Math.round(vaultPct * 0.6);
         const secondVaultPct = vaultPct - firstVaultPct;
         vaultStrategies[1].allocation = firstVaultPct;
-        vaultStrategies[1].reasoning = `Allocated ${firstVaultPct}% to Bonzo Vault — ${bestVault.depositToken}${bestVault.pairedToken ? '/' + bestVault.pairedToken : ''} (${bestVault.type}), auto-compounding concentrated liquidity`;
+        vaultStrategies[1].expectedApy = bestVault.apy * (firstVaultPct / 100);
+        vaultStrategies[1].reasoning = `Allocated ${firstVaultPct}% to Bonzo Vault — ${bestVault.depositToken}${bestVault.pairedToken ? '/' + bestVault.pairedToken : ''} (${bestVault.type}) at ${bestVault.apy.toFixed(1)}% APY, auto-compounding concentrated liquidity`;
 
         vaultStrategies.push({
           vaultAddress: secondVault.vaultAddress,
@@ -182,9 +183,9 @@ export class StrategistAgent extends BaseAgent {
           decimals: secondVault.depositDecimals,
           vaultName: secondVault.name,
           allocation: secondVaultPct,
-          expectedApy: 0,
+          expectedApy: secondVault.apy * (secondVaultPct / 100),
           riskLevel: secondVault.riskLevel,
-          reasoning: `Allocated ${secondVaultPct}% to Bonzo Vault — ${secondVault.depositToken}${secondVault.pairedToken ? '/' + secondVault.pairedToken : ''} (${secondVault.type}), diversified vault position`,
+          reasoning: `Allocated ${secondVaultPct}% to Bonzo Vault — ${secondVault.depositToken}${secondVault.pairedToken ? '/' + secondVault.pairedToken : ''} (${secondVault.type}) at ${secondVault.apy.toFixed(1)}% APY, diversified vault position`,
           productType: 'bonzo-vault',
           vaultType: secondVault.type,
         });
@@ -212,9 +213,9 @@ export class StrategistAgent extends BaseAgent {
         decimals: bestVault.depositDecimals,
         vaultName: bestVault.name,
         allocation: 100,
-        expectedApy: 0,
+        expectedApy: bestVault.apy,
         riskLevel: bestVault.riskLevel,
-        reasoning: `Allocated 100% to Bonzo Vault — ${bestVault.depositToken}${bestVault.pairedToken ? '/' + bestVault.pairedToken : ''}, auto-compounding concentrated liquidity`,
+        reasoning: `Allocated 100% to Bonzo Vault — ${bestVault.depositToken}${bestVault.pairedToken ? '/' + bestVault.pairedToken : ''} at ${bestVault.apy.toFixed(1)}% APY, auto-compounding concentrated liquidity`,
         productType: 'bonzo-vault',
         vaultType: bestVault.type,
       });
