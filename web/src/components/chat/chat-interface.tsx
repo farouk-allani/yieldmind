@@ -89,30 +89,41 @@ export function ChatInterface({
       return;
 
     const strategy = pendingStrategy;
-    const amount = strategy.userIntent?.targetAmount || 100;
+    const totalAmount = strategy.userIntent?.targetAmount || 100;
     const tokenSymbol = strategy.userIntent?.tokenSymbol || 'HBAR';
     const strategyName =
       strategy.vaults.map((v) => v.vaultName).join(' + ') || 'YieldMind Strategy';
 
-    // Get token details from primary vault for token-aware deposit
-    const primaryVault = strategy.vaults[0];
-    const assetEvmAddress = primaryVault?.assetEvmAddress;
-    const vaultSymbol = primaryVault?.symbol || 'HBAR';
-    const vaultDecimals = primaryVault?.decimals || 8;
+    // Find the Bonzo Lend vault (primary deposit target)
+    const lendVault = strategy.vaults.find((v) => v.productType === 'bonzo-lend') || strategy.vaults[0];
+    const assetEvmAddress = lendVault?.assetEvmAddress;
+    const vaultSymbol = lendVault?.symbol || 'HBAR';
+    const vaultDecimals = lendVault?.decimals || 8;
     const isNativeHbar = vaultSymbol === 'HBAR' && !assetEvmAddress;
     const depositTarget = vault.isBonzoDirect && assetEvmAddress ? 'Bonzo LendingPool' : 'YieldMindVault';
+
+    // Calculate the Bonzo Lend deposit amount based on allocation
+    const lendAllocation = lendVault?.allocation || 100;
+    const amount = Math.round((totalAmount * lendAllocation / 100) * 1e8) / 1e8;
+    const vaultVaults = strategy.vaults.filter((v) => v.productType === 'bonzo-vault');
+    const hasVaultAllocation = vaultVaults.length > 0;
+
+    const depositMsg = hasVaultAllocation
+      ? `Depositing ${amount} ${tokenSymbol} (${lendAllocation}%) into ${depositTarget}. ` +
+        `The remaining ${100 - lendAllocation}% is allocated to Bonzo Vaults — ` +
+        `vault deposits require specific token pairs and can be done via app.bonzo.finance.`
+      : `Requesting deposit of ${totalAmount} ${tokenSymbol} into ${depositTarget}...`;
 
     addMessage({
       id: `system-signing-${Date.now()}`,
       role: 'system',
       content: isNativeHbar
-        ? `Requesting deposit of ${amount} ${tokenSymbol} into ${depositTarget}... Please confirm in your wallet.`
-        : `Requesting deposit of ${amount} ${tokenSymbol} into ${depositTarget}... This requires 2 signatures: token approval + deposit.`,
+        ? `${depositMsg} Please confirm in your wallet.`
+        : `${depositMsg} This requires 2 signatures: token approval + deposit.`,
       timestamp: new Date().toISOString(),
     });
 
-    // Call the vault deposit — triggers wallet popup(s)
-    // Pass symbol + decimals for correct token-aware flow (HBAR vs ERC-20)
+    // Deposit the Bonzo Lend portion
     const result = await vault.deposit(
       strategy.id,
       strategyName,

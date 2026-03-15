@@ -50,6 +50,11 @@ const BONZO_HEDERA_IDS: Record<string, Record<string, string>> = {
     // WHBARGateway (Hedera-native): 0xa7e46f496b088a8f8ee35b74d7e58d6ce648ae64
     // Uses depositHBAR(address,address,uint16) — wraps HBAR→WHBAR via IWhbarHelper
     whbarGateway: '0.0.10071466',
+    // WETHGateway (original Aave v2 fork): 0x9a601543e9264255BebB20Cef0E7924e97127105
+    // Uses withdrawETH(address,uint256,address) — for HBAR withdrawals
+    // WHBARGateway has a safeApprove bug; use WETHGateway for withdrawals instead.
+    wethGateway: '0.0.7308485',
+    wethGatewayEvm: '9a601543e9264255bebb20cef0e7924e97127105',
   },
   testnet: {
     // LendingPool: 0xf67DBe9bD1B331cA379c44b5562EAa1CE831EbC2
@@ -236,9 +241,9 @@ async function depositViaHederaSDK(
 /**
  * Execute a Bonzo withdraw using the Hedera SDK + WalletConnect.
  *
- * For HBAR/WHBAR: approve aWHBAR for WHBARGateway, then call withdrawHBAR.
- *   On-chain selector: 0x51f91fc0
- *   Calldata: (address lendingPool, uint256 amount, uint16 referralCode, ???)
+ * For HBAR/WHBAR: ERC20-approve aWHBAR for WHBARGateway, then call
+ *   withdrawHBAR(address lendingPool, uint256 amount, address to)
+ *   Selector: 0xb465c052
  *
  * For ERC-20: call LendingPool.withdraw(asset, amount, to)
  */
@@ -251,7 +256,7 @@ async function withdrawViaHederaSDK(
   isNativeHbar: boolean,
   setStatus: (s: TxStatus) => void,
 ): Promise<TxResult> {
-  const { ContractExecuteTransaction, ContractId, Hbar } =
+  const { ContractExecuteTransaction, ContractId, AccountAllowanceApproveTransaction, TokenId, Hbar } =
     await import('@hiero-ledger/sdk');
   const { getHederaConnector, transactionToBase64String } =
     await import('./hedera-wallet-connect');
@@ -274,78 +279,145 @@ async function withdrawViaHederaSDK(
   } catch { /* ignore */ }
 
   if (isNativeHbar) {
-    // ── HBAR withdraw via WHBARGateway ──
-    // Step 1: Approve aWHBAR for WHBARGateway to burn
-    setStatus('approving');
-    console.log(`[Vault/SDK] Approving aWHBAR for WHBARGateway to withdraw ${symbol}...`);
+    // ── HBAR/WHBAR withdraw via LendingPool.withdraw() directly ──
+    // Gateway contracts are broken (WHBARGateway: safeApprove bug, WETHGateway:
+    // WalletConnect can't sequence approve+withdraw). Use LendingPool.withdraw()
+    // directly — user receives WHBAR (HTS token 0.0.1456986).
+    //
+    // Prerequisite: user must be associated with WHBAR token on Hedera.
+    // If not, we send a TokenAssociateTransaction first (one click), then
+    // the user clicks Withdraw again for the actual LendingPool.withdraw().
 
-    // Resolve aToken Hedera ID via Mirror Node
-    let aTokenHederaId = '';
+    const whbarTokenId = '0.0.1456986'; // WHBAR HTS token ID
+    const whbarEvm = '0000000000000000000000000000000000163b5a';
+    const amountHex = rawAmount.toString(16).padStart(64, '0');
+
+    // Check if user is associated with WHBAR via Mirror Node
+    let isAssociated = false;
     try {
-      const aTokenClean = aTokenAddress.replace('0x', '').toLowerCase();
-      const res = await fetch(`${mirrorNodeUrl}/api/v1/contracts/${aTokenClean}`);
+      const res = await fetch(
+        `${mirrorNodeUrl}/api/v1/accounts/${accountId}/tokens?token.id=${whbarTokenId}&limit=1`
+      );
       if (res.ok) {
-        const data = await res.json() as { contract_id?: string };
-        aTokenHederaId = data.contract_id || '';
+        const data = await res.json() as { tokens?: Array<{ token_id: string }> };
+        isAssociated = (data.tokens?.length ?? 0) > 0;
       }
-    } catch { /* ignore */ }
-
-    if (!aTokenHederaId) {
-      return { status: 'failed', txHash: null, error: 'Cannot resolve aToken contract ID' };
+      console.log(`[Vault/SDK] WHBAR token association: ${isAssociated ? 'YES' : 'NO'}`);
+    } catch {
+      console.warn('[Vault/SDK] Could not check token association');
     }
 
-    // Approve via ERC-20 approve(spender, amount) on aToken contract
-    // selector: 0x095ea7b3
-    const whbarGatewayEvm = 'a7e46f496b088a8f8ee35b74d7e58d6ce648ae64';
-    const spenderPadded = whbarGatewayEvm.padStart(64, '0');
-    const amountHex = rawAmount.toString(16).padStart(64, '0');
-    const approveCallData = Buffer.from(
-      '095ea7b3' + spenderPadded + amountHex,
-      'hex'
-    );
+    // If not associated, send TokenAssociateTransaction first
+    if (!isAssociated) {
+      setStatus('approving');
+      console.log('[Vault/SDK] User not associated with WHBAR — sending TokenAssociateTransaction...');
 
-    const approveTx = new ContractExecuteTransaction()
-      .setContractId(ContractId.fromString(aTokenHederaId))
-      .setGas(200_000)
-      .setFunctionParameters(approveCallData)
-      .setMaxTransactionFee(new Hbar(5));
+      const { TokenAssociateTransaction } = await import('@hiero-ledger/sdk');
+      const { TokenId } = await import('@hiero-ledger/sdk');
 
-    const approveResult = await connector.signAndExecuteTransaction({
-      signerAccountId,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      transactionList: transactionToBase64String(approveTx as any),
-    });
-    console.log('[Vault/SDK] aToken approve result:', approveResult);
+      const associateTx = new TokenAssociateTransaction()
+        .setAccountId(accountId)
+        .setTokenIds([TokenId.fromString(whbarTokenId)])
+        .setMaxTransactionFee(new Hbar(5));
 
-    // Step 2: Call WHBARGateway with on-chain selector 0x51f91fc0
-    // Calldata layout: (address lendingPool, uint256 amount, uint256 referralCode?, uint256 zero?)
+      try {
+        const assocResult = await connector.signAndExecuteTransaction({
+          signerAccountId,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          transactionList: transactionToBase64String(associateTx as any),
+        });
+        console.log('[Vault/SDK] Token associate result:', assocResult);
+      } catch (assocErr) {
+        console.error('[Vault/SDK] Token association failed:', assocErr);
+        setStatus('idle');
+        return {
+          status: 'failed',
+          txHash: null,
+          error: `Token association failed: ${assocErr instanceof Error ? assocErr.message : String(assocErr)}. Please try again.`,
+        };
+      }
+
+      // WalletConnect can't do two txs in sequence — tell user to click again
+      setStatus('idle');
+      return {
+        status: 'failed',
+        txHash: null,
+        error: 'WHBAR token associated! Please click Withdraw again to complete. (You will receive WHBAR tokens.)',
+      };
+    }
+
+    // User is associated with WHBAR — proceed with LendingPool.withdraw()
+    let toPadded: string;
+    if (userEvmAddress) {
+      toPadded = userEvmAddress.replace('0x', '').toLowerCase().padStart(64, '0');
+    } else {
+      const accountNum = parseInt(accountId.split('.')[2], 10);
+      toPadded = accountNum.toString(16).padStart(64, '0');
+    }
+
+    // LendingPool.withdraw(address asset, uint256 amount, address to)
+    // Selector: 0x69328dec
     setStatus('signing');
-    console.log(`[Vault/SDK] Withdrawing ${symbol} via WHBARGateway (0x51f91fc0)...`);
-
-    const lendingPoolEvmPadded = (knownIds.lendingPoolEvm || '').padStart(64, '0');
-    const referralCode = ''.padStart(62, '0') + '02'; // referral code = 2 (matching on-chain txs)
-    const zeroPadded = ''.padStart(64, '0');
+    console.log(`[Vault/SDK] Withdrawing ${symbol} via LendingPool.withdraw() (returns WHBAR)...`);
+    console.log(`[Vault/SDK] withdraw params: asset=WHBAR(${whbarEvm}), amount=${amountHex}, to=${toPadded}`);
 
     const withdrawCallData = Buffer.from(
-      '51f91fc0' + lendingPoolEvmPadded + amountHex + referralCode + zeroPadded,
+      '69328dec' + whbarEvm.padStart(64, '0') + amountHex + toPadded,
       'hex'
     );
 
     const withdrawTx = new ContractExecuteTransaction()
-      .setContractId(ContractId.fromString(knownIds.whbarGateway))
-      .setGas(2_000_000)
+      .setContractId(ContractId.fromString(knownIds.lendingPool))
+      .setGas(1_500_000)
       .setFunctionParameters(withdrawCallData)
       .setMaxTransactionFee(new Hbar(10));
 
     setStatus('confirming');
-    const result = await connector.signAndExecuteTransaction({
-      signerAccountId,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      transactionList: transactionToBase64String(withdrawTx as any),
-    });
+    let result;
+    try {
+      result = await connector.signAndExecuteTransaction({
+        signerAccountId,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        transactionList: transactionToBase64String(withdrawTx as any),
+      });
+      console.log('[Vault/SDK] LendingPool withdraw result:', result);
+    } catch (withdrawErr) {
+      console.error('[Vault/SDK] Withdraw step failed:', withdrawErr);
+      const errStr = withdrawErr instanceof Error ? withdrawErr.message : String(withdrawErr);
+      setStatus('idle');
+      return {
+        status: 'failed',
+        txHash: null,
+        error: errStr.includes('CONTRACT_REVERT')
+          ? 'Withdrawal reverted. Please try a smaller amount.'
+          : `Withdrawal failed: ${errStr}`,
+      };
+    }
 
-    console.log('[Vault/SDK] WHBARGateway withdraw result:', result);
+    // Verify via Mirror Node that the contract didn't revert
     const txId = (result as { transactionId?: string })?.transactionId || null;
+    if (txId) {
+      try {
+        await new Promise(r => setTimeout(r, 3000));
+        const txIdFormatted = txId.replace('@', '-').replace(/\./g, '-');
+        const res = await fetch(`${mirrorNodeUrl}/api/v1/contracts/results/${txIdFormatted}`);
+        if (res.ok) {
+          const data = await res.json() as { result?: string; error_message?: string };
+          if (data.result === 'CONTRACT_REVERT_EXECUTED' || data.error_message) {
+            console.error('[Vault/SDK] Contract reverted:', data.error_message);
+            setStatus('idle');
+            return {
+              status: 'failed',
+              txHash: txId,
+              error: `Withdrawal reverted: ${data.error_message || 'unknown reason'}. Try a smaller amount.`,
+            };
+          }
+        }
+      } catch {
+        // Mirror Node check failed — proceed optimistically
+      }
+    }
+
     setStatus('confirmed');
     return { status: 'confirmed', txHash: txId, error: null };
 

@@ -287,20 +287,20 @@ export default function PortfolioPage() {
                 icon={TrendingUp}
                 iconColor="text-accent"
                 iconBg="bg-badge-accent"
-                label={isMainnet ? 'Earning APY' : 'Protocol TVL'}
+                label={isMainnet ? 'Best APY' : 'Protocol TVL'}
                 value={
                   bonzo.positions.length > 0
-                    ? `${bonzo.positions[0].supplyApy.toFixed(2)}%`
+                    ? `${Math.max(...bonzo.positions.map(p => p.supplyApy)).toFixed(2)}%`
                     : vaultAddress
                     ? `${protocolTvl.toFixed(2)} HBAR`
                     : 'N/A'
                 }
                 subtext={
                   bonzo.positions.length > 0
-                    ? `${bonzo.positions[0].displaySymbol} Supply Pool`
+                    ? `Across ${bonzo.positions.length} Bonzo position${bonzo.positions.length > 1 ? 's' : ''}`
                     : vaultAddress
                     ? 'Total value locked in vault'
-                    : 'Bonzo LendingPool handles TVL on mainnet'
+                    : 'Bonzo Lend & Vaults on mainnet'
                 }
                 delay={0.05}
               />
@@ -439,7 +439,7 @@ export default function PortfolioPage() {
                       Bonzo Positions
                     </h3>
                     <p className="text-[11px] text-text-muted mt-0.5">
-                      Your active deposits in Bonzo lending pools on mainnet
+                      Your active deposits in Bonzo Lend pools on Hedera mainnet
                     </p>
                   </div>
                   <a
@@ -546,7 +546,7 @@ export default function PortfolioPage() {
                     Deposit Flow
                   </h3>
                   <p className="text-[11px] text-text-muted mt-0.5">
-                    On mainnet, deposits go directly into Bonzo lending pools
+                    On mainnet, deposits go into Bonzo Lend pools. AI agents also recommend Bonzo Vaults for enhanced yield.
                   </p>
                 </div>
                 <div className="p-5">
@@ -561,9 +561,9 @@ export default function PortfolioPage() {
                     <FlowArrow />
                     <FlowStep
                       icon={<img src="/bonzo.webp" alt="Bonzo" className="w-5 h-5 rounded-full" />}
-                      title="Bonzo Lending Pools"
-                      subtitle="Direct deposit via WHBARGateway"
-                      detail="HBAR via WHBARGateway, ERC-20 via approve + deposit"
+                      title="Bonzo Lend + Vaults"
+                      subtitle="Lend pools + auto-compounding vaults"
+                      detail="Lend: supply APY | Vaults: concentrated liquidity on SaucerSwap"
                       color="border-supply/30"
                       highlight
                     />
@@ -855,14 +855,14 @@ export default function PortfolioPage() {
                   name="Scout"
                   color="text-supply"
                   role="Data Discovery"
-                  description="Scans Bonzo Finance lending reserves in real-time. Fetches APY rates, TVL, and risk metrics from live mainnet data."
+                  description="Scans Bonzo Lend reserves and Bonzo Vaults in real-time. Fetches APY rates, TVL, and risk metrics from live mainnet data."
                 />
                 <AgentCard
                   iconSrc="/strategist.png"
                   name="Strategist"
                   color="text-accent"
                   role="Strategy Design"
-                  description="Analyzes your risk tolerance and maps it to optimal Bonzo vault allocations using Claude AI reasoning."
+                  description="Analyzes your risk tolerance and builds optimal strategies combining Bonzo Lend + Bonzo Vaults using AI reasoning."
                 />
                 <AgentCard
                   iconSrc="/execute.png"
@@ -870,7 +870,7 @@ export default function PortfolioPage() {
                   color="text-borrow"
                   role="On-Chain Execution"
                   description={isMainnet
-                    ? "Handles deposits directly into Bonzo lending pools. Verifies transactions via Mirror Node and publishes proof to HCS."
+                    ? "Handles deposits into Bonzo Lend pools and coordinates Bonzo Vault allocations. Verifies transactions via Mirror Node and publishes proof to HCS."
                     : "Handles the deposit into YieldMindVault. Verifies transactions via Mirror Node and publishes proof to HCS."
                   }
                 />
@@ -914,7 +914,7 @@ export default function PortfolioPage() {
                   </div>
                   <div className="text-[11px] text-text-muted mt-1">
                     {isMainnet
-                      ? 'FROM: your wallet → TO: Bonzo LendingPool'
+                      ? 'FROM: your wallet → TO: Bonzo Lend / Vaults'
                       : 'FROM: your wallet → TO: YieldMindVault'}
                   </div>
                 </div>
@@ -935,7 +935,7 @@ export default function PortfolioPage() {
                     <span className="text-[11px] text-text-muted">Bonzo Integration</span>
                   </div>
                   <div className="text-sm text-text-primary font-medium">
-                    {isMainnet ? 'Live Mainnet Data + Direct Deposits' : 'Live Data (Testnet)'}
+                    {isMainnet ? 'Bonzo Lend + Vaults — Live Data' : 'Live Data (Testnet)'}
                   </div>
                   <div className="text-[11px] text-text-muted mt-1">
                     APY rates & risk metrics from Bonzo Finance

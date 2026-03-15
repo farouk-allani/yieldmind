@@ -58,6 +58,8 @@ export interface VaultStrategy {
   expectedApy: number;
   riskLevel: RiskTolerance;
   reasoning: string;
+  productType?: 'bonzo-lend' | 'bonzo-vault';
+  vaultType?: string;
 }
 
 export interface UserIntent {
