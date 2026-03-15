@@ -63,6 +63,26 @@ export interface KeeperDecision {
   };
 }
 
+// ── CoinGecko response types ─────────────────────────────────────
+
+interface CoinGeckoData {
+  market_data?: {
+    price_change_percentage_24h?: number;
+    price_change_percentage_7d?: number;
+    price_change_percentage_30d?: number;
+    total_volume?: { usd?: number };
+    market_cap?: { usd?: number };
+  };
+  sentiment_votes_up_percentage?: number;
+  sentiment_votes_down_percentage?: number;
+}
+
+interface CoinGeckoTrending {
+  coins?: Array<{
+    item: { name: string; score: number };
+  }>;
+}
+
 // ── KeeperService ────────────────────────────────────────────────
 
 export class KeeperService {
@@ -207,8 +227,16 @@ export class KeeperService {
   }
 
   /**
-   * Get market sentiment for a token using CoinGecko status updates + LLM analysis.
-   * This is the RAG component — retrieves external data, then reasons over it.
+   * RAG-powered sentiment analysis.
+   *
+   * Retrieves data from 3 external sources, then feeds all context to
+   * the LLM for a harvest-timing decision:
+   *
+   * 1. CoinGecko — market data (price changes, volume, market cap, community votes)
+   * 2. CryptoPanic — real crypto news headlines (free, no key needed for public posts)
+   * 3. CoinGecko trending — what's hot in the market right now
+   *
+   * This is genuine RAG: Retrieve external documents → Augment the prompt → Generate decision.
    */
   async getSentiment(token: string): Promise<SentimentData | null> {
     const cached = this.sentimentCache.get(token);
@@ -222,66 +250,107 @@ export class KeeperService {
     if (!cgId) return null;
 
     try {
-      // Fetch coin data with market info (includes community data, sentiment)
-      const response = await fetch(
-        `${COINGECKO_BASE}/coins/${cgId}?localization=false&tickers=false&community_data=true&developer_data=false`
-      );
+      // ── Step 1: RETRIEVE — Fetch data from multiple external sources ──
 
-      let headlines: string[] = [];
-      let marketContext = '';
+      const [coinDataResult, newsResult, trendingResult] = await Promise.allSettled([
+        // Source 1: CoinGecko coin data (market stats + community sentiment)
+        fetch(`${COINGECKO_BASE}/coins/${cgId}?localization=false&tickers=false&community_data=true&developer_data=false`)
+          .then((r) => r.ok ? r.json() as Promise<CoinGeckoData> : null),
 
-      if (response.ok) {
-        const coinData = (await response.json()) as {
-          market_data?: {
-            price_change_percentage_24h?: number;
-            price_change_percentage_7d?: number;
-            price_change_percentage_30d?: number;
-            total_volume?: { usd?: number };
-            market_cap?: { usd?: number };
-          };
-          sentiment_votes_up_percentage?: number;
-          sentiment_votes_down_percentage?: number;
-          description?: { en?: string };
-        };
+        // Source 2: CryptoPanic news (free public API — real news headlines)
+        this.fetchCryptoNews(token),
 
+        // Source 3: CoinGecko trending coins (market momentum context)
+        fetch(`${COINGECKO_BASE}/search/trending`)
+          .then((r) => r.ok ? r.json() as Promise<CoinGeckoTrending> : null)
+          .catch(() => null),
+      ]);
+
+      const coinData = coinDataResult.status === 'fulfilled' ? coinDataResult.value : null;
+      const newsHeadlines = newsResult.status === 'fulfilled' ? newsResult.value : [];
+      const trending = trendingResult.status === 'fulfilled' ? trendingResult.value : null;
+
+      // ── Step 2: AUGMENT — Build rich context document for the LLM ──
+
+      const contextSections: string[] = [];
+      const headlines: string[] = [];
+
+      // Market data from CoinGecko
+      if (coinData?.market_data) {
         const md = coinData.market_data;
-        if (md) {
-          marketContext = [
-            `${token} price change: 24h=${md.price_change_percentage_24h?.toFixed(1)}%, ` +
-            `7d=${md.price_change_percentage_7d?.toFixed(1)}%, 30d=${md.price_change_percentage_30d?.toFixed(1)}%`,
-            `Volume 24h: $${((md.total_volume?.usd || 0) / 1e6).toFixed(1)}M`,
-            `Market cap: $${((md.market_cap?.usd || 0) / 1e6).toFixed(1)}M`,
-            `Community sentiment: ${coinData.sentiment_votes_up_percentage?.toFixed(0)}% bullish`,
-          ].join('\n');
+        contextSections.push(
+          `## Market Data (CoinGecko)\n` +
+          `- Price change: 24h=${md.price_change_percentage_24h?.toFixed(1)}%, ` +
+          `7d=${md.price_change_percentage_7d?.toFixed(1)}%, 30d=${md.price_change_percentage_30d?.toFixed(1)}%\n` +
+          `- Volume 24h: $${((md.total_volume?.usd || 0) / 1e6).toFixed(1)}M\n` +
+          `- Market cap: $${((md.market_cap?.usd || 0) / 1e6).toFixed(1)}M\n` +
+          `- Community sentiment: ${coinData.sentiment_votes_up_percentage?.toFixed(0)}% bullish`
+        );
+        headlines.push(
+          `${token} ${(md.price_change_percentage_24h || 0) >= 0 ? 'up' : 'down'} ${Math.abs(md.price_change_percentage_24h || 0).toFixed(1)}% in 24h`,
+          `7d: ${md.price_change_percentage_7d?.toFixed(1)}% | 30d: ${md.price_change_percentage_30d?.toFixed(1)}%`,
+        );
+      }
 
-          headlines = [
-            `${token} ${(md.price_change_percentage_24h || 0) > 0 ? 'up' : 'down'} ${Math.abs(md.price_change_percentage_24h || 0).toFixed(1)}% in 24h`,
-            `7-day trend: ${(md.price_change_percentage_7d || 0) > 0 ? 'positive' : 'negative'} (${md.price_change_percentage_7d?.toFixed(1)}%)`,
-            `Community sentiment: ${coinData.sentiment_votes_up_percentage?.toFixed(0)}% positive`,
-          ];
+      // Real news headlines from CryptoPanic
+      if (newsHeadlines.length > 0) {
+        contextSections.push(
+          `## Recent News Headlines (CryptoPanic)\n` +
+          newsHeadlines.map((h: string, i: number) => `${i + 1}. ${h}`).join('\n')
+        );
+        headlines.push(...newsHeadlines.slice(0, 3));
+      }
+
+      // Trending context
+      if (trending?.coins) {
+        const trendingNames = trending.coins
+          .slice(0, 5)
+          .map((c: { item: { name: string; score: number } }) => c.item.name);
+        const isTokenTrending = trendingNames.some(
+          (name: string) => name.toLowerCase().includes(token.toLowerCase())
+        );
+        contextSections.push(
+          `## Market Trending (CoinGecko)\n` +
+          `Top trending: ${trendingNames.join(', ')}\n` +
+          `${token} is ${isTokenTrending ? 'TRENDING (high attention)' : 'not trending'}`
+        );
+        if (isTokenTrending) {
+          headlines.push(`${token} is trending on CoinGecko`);
         }
       }
 
-      if (!marketContext) {
+      if (contextSections.length === 0) {
         return { token, sentiment: 'neutral', confidence: 0.3, reasoning: 'No market data available', headlines: [] };
       }
 
-      // RAG: Feed market data to LLM for sentiment analysis
+      const fullContext = contextSections.join('\n\n');
+      console.log(`[Keeper/RAG] ${token}: retrieved ${contextSections.length} data sources, ${newsHeadlines.length} news headlines`);
+
+      // ── Step 3: GENERATE — LLM reasons over all retrieved context ──
+
       const llmResponse = await this.llmClient.chat([
         {
           role: 'system',
-          content: `You are a DeFi market sentiment analyzer for an intelligent keeper agent.
-Analyze the market data and determine if the keeper should harvest vault rewards NOW or WAIT.
-Respond with ONLY valid JSON:
+          content: `You are a DeFi market sentiment analyzer for an intelligent keeper agent managing Bonzo Finance vaults on Hedera.
+
+Your job: analyze ALL the retrieved data (market stats, news headlines, trending coins) and decide whether the keeper should HARVEST vault rewards NOW or WAIT.
+
+Key considerations:
+- Bearish news/sentiment → harvest NOW to lock in reward value before token price drops
+- Bullish momentum + positive news → WAIT to let reward tokens appreciate
+- High volatility + mixed signals → harvest NOW to reduce risk
+- Neutral with no news → WAIT, let rewards compound
+
+Respond with ONLY valid JSON (no markdown, no explanation outside JSON):
 {
   "sentiment": "bullish" | "bearish" | "neutral",
   "confidence": 0.0-1.0,
-  "reasoning": "one sentence explanation for the harvest decision"
+  "reasoning": "2-3 sentence explanation referencing specific data points and news that informed your decision"
 }`,
         },
         {
           role: 'user',
-          content: `Analyze the market sentiment for ${token} to decide harvest timing:\n\n${marketContext}`,
+          content: `Analyze all retrieved data for ${token} and decide optimal harvest timing:\n\n${fullContext}`,
         },
       ]);
 
@@ -308,13 +377,80 @@ Respond with ONLY valid JSON:
 
       // Cache for 30 minutes
       this.sentimentCache.set(token, { data: result, expiry: Date.now() + 1_800_000 });
-      console.log(`[Keeper] ${token} sentiment: ${result.sentiment} (${(result.confidence * 100).toFixed(0)}%) — ${result.reasoning}`);
+      console.log(`[Keeper/RAG] ${token} sentiment: ${result.sentiment} (${(result.confidence * 100).toFixed(0)}%) — ${result.reasoning}`);
 
       return result;
     } catch (error) {
       console.warn(`[Keeper] Failed to get sentiment for ${token}:`, error);
       return null;
     }
+  }
+
+  /**
+   * Fetch real crypto news headlines from CryptoPanic (free, no API key needed).
+   * Falls back to CoinGecko search if CryptoPanic is unavailable.
+   */
+  private async fetchCryptoNews(token: string): Promise<string[]> {
+    const headlines: string[] = [];
+
+    // CryptoPanic free API — returns public posts (no auth_token = public only)
+    try {
+      const currency = token.toLowerCase() === 'hbar' ? 'HBAR' : token.toUpperCase();
+      const cpResponse = await fetch(
+        `https://cryptopanic.com/api/free/v1/posts/?currencies=${currency}&kind=news&public=true`,
+        { signal: AbortSignal.timeout(5000) }
+      );
+
+      if (cpResponse.ok) {
+        const cpData = (await cpResponse.json()) as {
+          results?: Array<{
+            title: string;
+            published_at: string;
+            kind: string;
+            domain: string;
+          }>;
+        };
+
+        if (cpData.results) {
+          for (const post of cpData.results.slice(0, 8)) {
+            headlines.push(`[${post.domain}] ${post.title}`);
+          }
+          console.log(`[Keeper/RAG] CryptoPanic: ${headlines.length} news headlines for ${token}`);
+        }
+      }
+    } catch {
+      console.log(`[Keeper/RAG] CryptoPanic unavailable for ${token}, trying fallback...`);
+    }
+
+    // Fallback: Use Google News RSS via rss2json if CryptoPanic fails
+    if (headlines.length === 0) {
+      try {
+        const query = encodeURIComponent(`${token} cryptocurrency`);
+        const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`;
+        const rssResponse = await fetch(
+          `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=6`,
+          { signal: AbortSignal.timeout(5000) }
+        );
+
+        if (rssResponse.ok) {
+          const rssData = (await rssResponse.json()) as {
+            status?: string;
+            items?: Array<{ title: string; pubDate: string }>;
+          };
+
+          if (rssData.status === 'ok' && rssData.items) {
+            for (const item of rssData.items.slice(0, 6)) {
+              headlines.push(item.title);
+            }
+            console.log(`[Keeper/RAG] Google News RSS: ${headlines.length} headlines for ${token}`);
+          }
+        }
+      } catch {
+        console.log(`[Keeper/RAG] RSS fallback also unavailable for ${token}`);
+      }
+    }
+
+    return headlines;
   }
 
   /**

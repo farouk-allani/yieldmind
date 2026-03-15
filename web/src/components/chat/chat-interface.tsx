@@ -2,10 +2,12 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Check, X, Loader2, Wallet, ShieldCheck, ShieldAlert, Zap, TrendingUp } from 'lucide-react';
+import { Send, Check, X, Loader2, Wallet, ShieldCheck, ShieldAlert, Zap, History } from 'lucide-react';
 import { MessageBubble } from './message-bubble';
+import { SessionSidebar } from './session-sidebar';
 import { useWallet } from '@/lib/wallet-context';
 import { useVault } from '@/lib/use-vault';
+import { useChatHistory } from '@/lib/use-chat-history';
 import { hashscanTxUrl, getNetworkConfig, getCurrentNetwork } from '@/lib/network-config';
 import type { ChatMessage, Strategy } from '@/lib/types';
 import { sendChatMessage, fetchAgentStatus } from '@/lib/api';
@@ -30,20 +32,37 @@ export function ChatInterface({
   const [pendingStrategy, setPendingStrategy] = useState<Strategy | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [showHistory, setShowHistory] = useState(false);
 
   const wallet = useWallet();
   const vault = useVault();
+  const chatHistory = useChatHistory();
+
+  const welcomeMessage: ChatMessage = {
+    id: 'welcome',
+    role: 'system',
+    content:
+      'Welcome to YieldMind. Connect your wallet, then tell me your yield intent and I\'ll coordinate the agent network to find the optimal strategy on Bonzo Vaults.\n\nTry: "I want safe yield on 100 HBAR"',
+    timestamp: new Date().toISOString(),
+  };
 
   useEffect(() => {
     setMounted(true);
-    setMessages([{
-      id: 'welcome',
-      role: 'system',
-      content:
-        'Welcome to YieldMind. Connect your wallet, then tell me your yield intent and I\'ll coordinate the agent network to find the optimal strategy on Bonzo Vaults.\n\nTry: "I want safe yield on 100 HBAR"',
-      timestamp: new Date().toISOString(),
-    }]);
+    setMessages([welcomeMessage]);
   }, []);
+
+  // Load chat sessions when wallet connects
+  useEffect(() => {
+    if (wallet.isConnected && wallet.address && chatHistory.isAvailable) {
+      chatHistory.loadSessions(wallet.address);
+      // Create a new session if none active
+      if (!chatHistory.activeSessionId) {
+        chatHistory.newSession(wallet.address).then((id) => {
+          sessionRef.current = id;
+        });
+      }
+    }
+  }, [wallet.isConnected, wallet.address, chatHistory.isAvailable]);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -91,110 +110,182 @@ export function ChatInterface({
     const strategy = pendingStrategy;
     const totalAmount = strategy.userIntent?.targetAmount || 100;
     const tokenSymbol = strategy.userIntent?.tokenSymbol || 'HBAR';
-    const strategyName =
-      strategy.vaults.map((v) => v.vaultName).join(' + ') || 'YieldMind Strategy';
+    // Separate executable allocations: Bonzo Lend + Bonzo Vaults
+    const lendVault = strategy.vaults.find((v) => v.productType === 'bonzo-lend' && v.allocation > 0);
+    const vaultAllocations = strategy.vaults.filter((v) => v.productType === 'bonzo-vault' && v.allocation > 0);
 
-    // Find the Bonzo Lend vault (primary deposit target)
-    const lendVault = strategy.vaults.find((v) => v.productType === 'bonzo-lend') || strategy.vaults[0];
-    const assetEvmAddress = lendVault?.assetEvmAddress;
-    const vaultSymbol = lendVault?.symbol || 'HBAR';
-    const vaultDecimals = lendVault?.decimals || 8;
+    const primaryVault = lendVault || strategy.vaults.find((v) => v.allocation > 0) || strategy.vaults[0];
+    const assetEvmAddress = primaryVault?.assetEvmAddress;
+    const vaultSymbol = primaryVault?.symbol || 'HBAR';
     const isNativeHbar = vaultSymbol === 'HBAR' && !assetEvmAddress;
-    const depositTarget = vault.isBonzoDirect && assetEvmAddress ? 'Bonzo LendingPool' : 'YieldMindVault';
 
-    // Calculate the Bonzo Lend deposit amount based on allocation
-    const lendAllocation = lendVault?.allocation || 100;
-    const amount = Math.round((totalAmount * lendAllocation / 100) * 1e8) / 1e8;
-    const vaultVaults = strategy.vaults.filter((v) => v.productType === 'bonzo-vault');
-    const hasVaultAllocation = vaultVaults.length > 0;
+    // Calculate amounts per allocation
+    const lendAmount = lendVault ? Math.round((totalAmount * lendVault.allocation / 100) * 1e8) / 1e8 : 0;
+    const vaultAmounts = vaultAllocations.map((v) => ({
+      vault: v,
+      amount: Math.round((totalAmount * v.allocation / 100) * 1e8) / 1e8,
+    }));
 
-    const depositMsg = hasVaultAllocation
-      ? `Depositing ${amount} ${tokenSymbol} (${lendAllocation}%) into ${depositTarget}. ` +
-        `The remaining ${100 - lendAllocation}% is allocated to Bonzo Vaults — ` +
-        `vault deposits require specific token pairs and can be done via app.bonzo.finance.`
-      : `Requesting deposit of ${totalAmount} ${tokenSymbol} into ${depositTarget}...`;
+    // Build deposit summary
+    const parts: string[] = [];
+    if (lendAmount > 0) parts.push(`${lendAmount} ${tokenSymbol} → Bonzo Lend (${lendVault!.allocation}%)`);
+    for (const va of vaultAmounts) parts.push(`${va.amount} ${tokenSymbol} → ${va.vault.vaultName} (${va.vault.allocation}%)`);
 
     addMessage({
       id: `system-signing-${Date.now()}`,
       role: 'system',
-      content: isNativeHbar
-        ? `${depositMsg} Please confirm in your wallet.`
-        : `${depositMsg} This requires 2 signatures: token approval + deposit.`,
+      content: `Executing strategy:\n${parts.map((p) => `• ${p}`).join('\n')}\n\n${
+        vaultAmounts.length > 0
+          ? `This will require ${1 + vaultAmounts.length} wallet signature${vaultAmounts.length > 0 ? 's' : ''} (one per deposit target).`
+          : isNativeHbar ? 'Please confirm in your wallet.' : 'This requires 2 signatures: token approval + deposit.'
+      }`,
       timestamp: new Date().toISOString(),
     });
 
-    // Deposit the Bonzo Lend portion
-    const result = await vault.deposit(
-      strategy.id,
-      strategyName,
-      amount,
-      assetEvmAddress,
-      vaultSymbol,
-      vaultDecimals
-    );
+    // ── Execute deposits sequentially: Lend first, then Vault(s) ──
+    const depositResults: Array<{ target: string; amount: number; txHash?: string; error?: string }> = [];
 
-    if (result.status === 'confirmed' && result.txHash) {
+    // Step 1: Bonzo Lend deposit
+    if (lendAmount > 0 && lendVault) {
       addMessage({
-        id: `system-confirmed-${Date.now()}`,
+        id: `system-lend-${Date.now()}`,
         role: 'system',
-        content: `Transaction signed and confirmed on-chain! Verifying with agent network...`,
+        content: `Step 1: Depositing ${lendAmount} ${tokenSymbol} into Bonzo Lend...`,
         timestamp: new Date().toISOString(),
       });
 
-      // Send tx hash to backend for HCS logging
+      const lendResult = await vault.deposit(
+        strategy.id,
+        lendVault.vaultName,
+        lendAmount,
+        lendVault.assetEvmAddress,
+        lendVault.symbol,
+        lendVault.decimals
+      );
+
+      if (lendResult.status === 'confirmed' && lendResult.txHash) {
+        depositResults.push({ target: lendVault.vaultName, amount: lendAmount, txHash: lendResult.txHash });
+        addMessage({
+          id: `system-lend-ok-${Date.now()}`,
+          role: 'system',
+          content: `Bonzo Lend deposit confirmed: ${lendAmount} ${tokenSymbol}`,
+          timestamp: new Date().toISOString(),
+        });
+        vault.resetStatus();
+      } else {
+        depositResults.push({ target: lendVault.vaultName, amount: lendAmount, error: lendResult.error || 'Failed' });
+        addMessage({
+          id: `system-lend-fail-${Date.now()}`,
+          role: 'system',
+          content: `Bonzo Lend deposit failed: ${lendResult.error || 'Unknown error'}`,
+          timestamp: new Date().toISOString(),
+        });
+        vault.resetStatus();
+      }
+    }
+
+    // Step 2: Bonzo Vault deposit(s)
+    for (let i = 0; i < vaultAmounts.length; i++) {
+      const { vault: vaultAlloc, amount: vaultAmt } = vaultAmounts[i];
+
+      addMessage({
+        id: `system-vault-${i}-${Date.now()}`,
+        role: 'system',
+        content: `Step ${(lendAmount > 0 ? 2 : 1) + i}: Depositing ${vaultAmt} ${tokenSymbol} into ${vaultAlloc.vaultName}...`,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Bonzo Vault deposit: approve token + vault.deposit(amount)
+      // The deposit function in use-vault handles this via depositBonzoVault
+      const vaultResult = await vault.deposit(
+        strategy.id,
+        vaultAlloc.vaultName,
+        vaultAmt,
+        vaultAlloc.assetEvmAddress,  // vault contract address
+        vaultAlloc.symbol,
+        vaultAlloc.decimals,
+        undefined, // aTokenAddress not needed
+        'bonzo-vault' // signal this is a vault deposit, not a lend deposit
+      );
+
+      if (vaultResult.status === 'confirmed' && vaultResult.txHash) {
+        depositResults.push({ target: vaultAlloc.vaultName, amount: vaultAmt, txHash: vaultResult.txHash });
+        addMessage({
+          id: `system-vault-ok-${i}-${Date.now()}`,
+          role: 'system',
+          content: `Vault deposit confirmed: ${vaultAmt} ${tokenSymbol} → ${vaultAlloc.vaultName}`,
+          timestamp: new Date().toISOString(),
+        });
+      } else {
+        depositResults.push({ target: vaultAlloc.vaultName, amount: vaultAmt, error: vaultResult.error || 'Failed' });
+        addMessage({
+          id: `system-vault-fail-${i}-${Date.now()}`,
+          role: 'system',
+          content: `Vault deposit failed: ${vaultResult.error || 'Unknown error'}`,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      vault.resetStatus();
+    }
+
+    // ── Summary & HCS logging ──
+    const successful = depositResults.filter((r) => r.txHash);
+    const totalDeposited = successful.reduce((sum, r) => sum + r.amount, 0);
+
+    if (successful.length > 0) {
+      // Log the first successful tx to HCS
+      const primaryTx = successful[0];
       try {
         const response = await fetch('/api/execute/confirm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            txHash: result.txHash,
+            txHash: primaryTx.txHash,
             userAddress: wallet.address,
-            depositAmount: amount,
+            depositAmount: totalDeposited,
             tokenSymbol,
             sessionId,
-            evmNetwork: getCurrentNetwork(), // tells backend which HashScan to link
+            evmNetwork: getCurrentNetwork(),
           }),
         });
 
         const data = await response.json();
+        const txLinks = successful.map((r) => `• ${r.target}: [${r.txHash!.slice(0, 12)}...](${hashscanTxUrl(r.txHash!)})`).join('\n');
 
-        const confirmMessage: ChatMessage = {
+        addMessage({
           id: `assistant-confirm-${Date.now()}`,
           role: 'assistant',
-          content:
-            data.message ||
-            `Deposit confirmed! View on HashScan: ${hashscanTxUrl(result.txHash!)}`,
+          content: data.message || `Strategy executed! ${totalDeposited} ${tokenSymbol} deposited.\n\n${txLinks}\n\nThe Sentinel agent is monitoring your positions.`,
           timestamp: new Date().toISOString(),
           agentStates: data.agentStates,
           strategy: data.strategy,
           decisions: data.decisions,
-        };
-        addMessage(confirmMessage);
+        });
 
         if (data.agentStates) onAgentUpdate?.(data.agentStates);
         if (data.decisions) onDecisionsUpdate?.(data.decisions);
         if (data.strategy) onStrategyUpdate?.(data.strategy);
       } catch {
+        const txLinks = successful.map((r) => `• ${r.target}: ${hashscanTxUrl(r.txHash!)}`).join('\n');
         addMessage({
           id: `assistant-confirmed-fallback-${Date.now()}`,
           role: 'assistant',
-          content: `Deposit confirmed on-chain!\n\n**Transaction:** ${hashscanTxUrl(result.txHash!)}\n\nYour ${amount} ${tokenSymbol} has been deposited into Bonzo Finance. The Sentinel agent is monitoring your position.`,
+          content: `Strategy executed! ${totalDeposited} ${tokenSymbol} deposited into Bonzo Finance.\n\n${txLinks}\n\nSentinel agent is monitoring your positions.`,
           timestamp: new Date().toISOString(),
         });
       }
 
       setPendingStrategy(null);
-      vault.resetStatus();
       wallet.refreshBalance();
     } else {
       addMessage({
         id: `system-failed-${Date.now()}`,
         role: 'system',
-        content: `Deposit failed: ${result.error || 'Unknown error'}. No funds were moved.`,
+        content: `All deposits failed. No funds were moved. ${depositResults.map((r) => r.error).join('; ')}`,
         timestamp: new Date().toISOString(),
       });
-      vault.resetStatus();
     }
+    vault.resetStatus();
   };
 
   const handleRejectStrategy = () => {
@@ -223,6 +314,9 @@ export function ChatInterface({
     setInput('');
     setIsLoading(true);
 
+    // Persist user message to Supabase
+    chatHistory.persistMessage(sessionId, 'user', trimmed);
+
     try {
       const response = await sendChatMessage(trimmed, sessionId);
       if (response.strategy) {
@@ -240,6 +334,12 @@ export function ChatInterface({
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
+
+      // Persist assistant message to Supabase (with metadata)
+      chatHistory.persistMessage(sessionId, 'assistant', response.message, {
+        strategy: response.strategy || undefined,
+        decisions: response.decisions || undefined,
+      });
 
       if (response.agentStates) onAgentUpdate?.(response.agentStates);
       if (response.decisions) onDecisionsUpdate?.(response.decisions);
@@ -265,11 +365,50 @@ export function ChatInterface({
     }
   };
 
+  const handleNewSession = async () => {
+    if (!wallet.address) return;
+    const id = await chatHistory.newSession(wallet.address);
+    sessionRef.current = id;
+    setMessages([welcomeMessage]);
+    setPendingStrategy(null);
+  };
+
+  const handleSwitchSession = async (sid: string) => {
+    sessionRef.current = sid;
+    const loaded = await chatHistory.switchSession(sid);
+    if (loaded.length > 0) {
+      setMessages([welcomeMessage, ...loaded]);
+    } else {
+      setMessages([welcomeMessage]);
+    }
+    setPendingStrategy(null);
+  };
+
   return (
     <div className="flex flex-col h-full">
+      {/* Session History Sidebar */}
+      <SessionSidebar
+        sessions={chatHistory.sessions}
+        activeSessionId={chatHistory.activeSessionId}
+        isOpen={showHistory}
+        onClose={() => setShowHistory(false)}
+        onNewSession={handleNewSession}
+        onSwitchSession={handleSwitchSession}
+        onDeleteSession={(sid) => chatHistory.removeSession(sid)}
+      />
+
       {/* Header */}
       <div className="flex-shrink-0 border-b border-border-subtle px-5 py-3">
         <div className="flex items-center gap-2.5">
+          {chatHistory.isAvailable && (
+            <button
+              onClick={() => setShowHistory(true)}
+              className="p-1.5 rounded-[6px] hover:bg-surface transition-colors text-text-muted hover:text-text-primary"
+              title="Chat history"
+            >
+              <History className="w-4 h-4" />
+            </button>
+          )}
           <div className="w-7 h-7 rounded-[8px] bg-[#F7F6F0] flex items-center justify-center overflow-hidden">
             <img src="/strategist.png" alt="AI" className="w-4 h-4 object-contain" />
           </div>
@@ -278,7 +417,9 @@ export function ChatInterface({
               Agent Chat
             </h2>
             <p className="text-[10px] text-text-muted">
-              {mounted ? sessionId : ''}
+              {mounted ? (chatHistory.isAvailable && chatHistory.activeSessionId
+                ? `Session ${chatHistory.activeSessionId.slice(0, 8)}...`
+                : sessionId) : ''}
             </p>
           </div>
           <div className="flex items-center gap-1.5">
@@ -410,7 +551,6 @@ function StrategyApprovalCard({
       <div className="px-4 py-3 border-b border-border-subtle flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 mb-0.5">
-            {/* <TrendingUp className="w-3.5 h-3.5 text-supply" /> */}
             <span className="text-sm font-semibold text-text-primary">
               Strategy Proposal
             </span>
@@ -451,9 +591,9 @@ function StrategyApprovalCard({
         </div>
       </div>
 
-      {/* Vault allocations */}
+      {/* Executable allocations */}
       <div className="px-4 pb-3 space-y-1.5">
-        {strategy.vaults.map((v, i) => (
+        {strategy.vaults.filter((v) => v.allocation > 0).map((v, i) => (
           <div
             key={i}
             className="flex items-center justify-between py-2 px-3 rounded-[8px] bg-[rgba(255,255,255,0.03)] border border-border-subtle"
@@ -462,15 +602,49 @@ function StrategyApprovalCard({
               <img src="/bonzo.webp" alt="Bonzo" className="w-5 h-5 rounded-full flex-shrink-0" />
               <div>
                 <div className="text-[13px] font-medium text-text-primary leading-tight">{v.vaultName}</div>
-                <div className="text-[11px] text-text-muted">{v.symbol} · Bonzo Finance</div>
+                <div className="text-[11px] text-text-muted">{v.symbol} · Bonzo Lend</div>
               </div>
             </div>
             <div className="text-right flex-shrink-0">
               <div className="text-[13px] font-semibold text-text-primary">{v.allocation}%</div>
-              <div className="text-[11px] text-supply">{v.expectedApy.toFixed(1)}% APY</div>
+              <div className="text-[11px] text-supply">{v.expectedApy.toFixed(2)}% APY</div>
             </div>
           </div>
         ))}
+
+        {/* Vault recommendations (not auto-deposited) */}
+        {strategy.vaults.filter((v) => v.allocation === 0).length > 0 && (
+          <>
+            <div className="text-[10px] text-text-muted uppercase tracking-wide pt-2 pb-1">
+              Additional Yield Opportunities (manual deposit)
+            </div>
+            {strategy.vaults.filter((v) => v.allocation === 0).map((v, i) => (
+              <div
+                key={`rec-${i}`}
+                className="flex items-center justify-between py-2 px-3 rounded-[8px] bg-[rgba(255,255,255,0.02)] border border-border-subtle border-dashed opacity-75"
+              >
+                <div className="flex items-center gap-2.5">
+                  <img src="/bonzo.webp" alt="Bonzo" className="w-5 h-5 rounded-full flex-shrink-0" />
+                  <div>
+                    <div className="text-[12px] font-medium text-text-secondary leading-tight">{v.vaultName}</div>
+                    <div className="text-[11px] text-text-muted">{v.symbol} · Bonzo Vault</div>
+                  </div>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <div className="text-[12px] font-semibold text-points">{v.expectedApy.toFixed(1)}% APY</div>
+                  <a
+                    href="https://app.bonzo.finance/vaults"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-accent hover:text-accent/80"
+                  >
+                    Deposit on Bonzo →
+                  </a>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
       </div>
 
       {/* AI reasoning excerpt */}

@@ -8,7 +8,6 @@ import type {
   BonzoVaultInfo,
   Strategy,
   VaultStrategy,
-  RiskTolerance,
 } from '../types/index.js';
 
 interface StrategistInput {
@@ -117,14 +116,18 @@ export class StrategistAgent extends BaseAgent {
   /**
    * Build a combined strategy from Bonzo Lend reserves + Bonzo Vaults.
    *
-   * The strategy always tries to include BOTH product types:
-   * - Bonzo Lend: base yield layer (lending APY, lower risk)
-   * - Bonzo Vaults: enhanced yield layer (auto-compounding concentrated liquidity)
+   * Both are executable:
+   * - Bonzo Lend: LendingPool.deposit / WETHGateway (existing flow)
+   * - Bonzo Vaults: Single-asset vaults accept one token via vault.deposit(amount)
+   *   For HBAR, user deposits into a WHBAR single-asset vault (wrap HBAR → WHBAR → approve → deposit)
    *
    * Allocation split depends on risk tolerance:
-   * - Conservative: 70% Lend + 30% Vault (or 100% Lend if no vault match)
+   * - Conservative: 70% Lend + 30% Vault
    * - Moderate: 40% Lend + 60% Vault
-   * - Aggressive: 20% Lend + 80% Vault (or 100% Vault)
+   * - Aggressive: 20% Lend + 80% Vault
+   *
+   * Only single-asset vaults whose depositToken matches the user's token are eligible.
+   * Dual-asset vaults are excluded (require both tokens in correct ratio).
    */
   private buildCombinedStrategy(
     intent: UserIntent,
@@ -133,9 +136,17 @@ export class StrategistAgent extends BaseAgent {
   ): Strategy {
     const vaultStrategies: VaultStrategy[] = [];
     const bestLend = lendReserves[0] || null;
-    const bestVault = bonzoVaults[0] || null;
 
-    // Determine allocation split based on risk tolerance
+    // Filter to single-asset vaults that accept the user's token
+    // For HBAR → find WHBAR single-asset vaults
+    const userToken = intent.tokenSymbol.toUpperCase();
+    const vaultToken = userToken === 'HBAR' ? 'WHBAR' : userToken;
+    const eligibleVaults = bonzoVaults.filter((v) =>
+      v.type !== 'dual-asset-dex' &&
+      v.depositToken.toUpperCase().includes(vaultToken)
+    );
+    const bestVault = eligibleVaults[0] || null;
+
     if (bestLend && bestVault) {
       const { lendPct, vaultPct } = this.getAllocationSplit(intent.riskTolerance);
 
@@ -146,9 +157,9 @@ export class StrategistAgent extends BaseAgent {
         decimals: bestLend.decimals,
         vaultName: bestLend.name,
         allocation: lendPct,
-        expectedApy: bestLend.apy * (lendPct / 100),
+        expectedApy: bestLend.apy,
         riskLevel: bestLend.riskLevel,
-        reasoning: `Allocated ${lendPct}% to Bonzo Lend — ${bestLend.tokenPair} at ${bestLend.apy.toFixed(1)}% supply APY, ${bestLend.riskLevel} risk`,
+        reasoning: `Allocated ${lendPct}% to Bonzo Lend — ${bestLend.tokenPair} at ${bestLend.apy.toFixed(2)}% supply APY, ${bestLend.riskLevel} risk. Stable base yield.`,
         productType: 'bonzo-lend',
       });
 
@@ -159,22 +170,20 @@ export class StrategistAgent extends BaseAgent {
         decimals: bestVault.depositDecimals,
         vaultName: bestVault.name,
         allocation: vaultPct,
-        expectedApy: bestVault.apy * (vaultPct / 100),
+        expectedApy: bestVault.apy,
         riskLevel: bestVault.riskLevel,
-        reasoning: `Allocated ${vaultPct}% to Bonzo Vault — ${bestVault.depositToken}${bestVault.pairedToken ? '/' + bestVault.pairedToken : ''} (${bestVault.type}) at ${bestVault.apy.toFixed(1)}% APY, auto-compounding concentrated liquidity on SaucerSwap`,
+        reasoning: `Allocated ${vaultPct}% to Bonzo Vault — ${bestVault.depositToken}${bestVault.pairedToken ? '/' + bestVault.pairedToken : ''} at ${bestVault.apy.toFixed(1)}% APY. Auto-compounding concentrated liquidity on SaucerSwap.`,
         productType: 'bonzo-vault',
         vaultType: bestVault.type,
       });
 
-      // Add a second vault option for moderate/aggressive
-      if (intent.riskTolerance !== 'conservative' && bonzoVaults.length > 1) {
-        const secondVault = bonzoVaults[1];
-        // Split the vault allocation: 60/40 between first and second vault
+      // Add second vault for moderate/aggressive diversification
+      if (intent.riskTolerance !== 'conservative' && eligibleVaults.length > 1) {
+        const secondVault = eligibleVaults[1];
         const firstVaultPct = Math.round(vaultPct * 0.6);
         const secondVaultPct = vaultPct - firstVaultPct;
         vaultStrategies[1].allocation = firstVaultPct;
-        vaultStrategies[1].expectedApy = bestVault.apy * (firstVaultPct / 100);
-        vaultStrategies[1].reasoning = `Allocated ${firstVaultPct}% to Bonzo Vault — ${bestVault.depositToken}${bestVault.pairedToken ? '/' + bestVault.pairedToken : ''} (${bestVault.type}) at ${bestVault.apy.toFixed(1)}% APY, auto-compounding concentrated liquidity`;
+        vaultStrategies[1].reasoning = `Allocated ${firstVaultPct}% to Bonzo Vault — ${bestVault.depositToken}${bestVault.pairedToken ? '/' + bestVault.pairedToken : ''} at ${bestVault.apy.toFixed(1)}% APY. Auto-compounding concentrated liquidity.`;
 
         vaultStrategies.push({
           vaultAddress: secondVault.vaultAddress,
@@ -183,15 +192,14 @@ export class StrategistAgent extends BaseAgent {
           decimals: secondVault.depositDecimals,
           vaultName: secondVault.name,
           allocation: secondVaultPct,
-          expectedApy: secondVault.apy * (secondVaultPct / 100),
+          expectedApy: secondVault.apy,
           riskLevel: secondVault.riskLevel,
-          reasoning: `Allocated ${secondVaultPct}% to Bonzo Vault — ${secondVault.depositToken}${secondVault.pairedToken ? '/' + secondVault.pairedToken : ''} (${secondVault.type}) at ${secondVault.apy.toFixed(1)}% APY, diversified vault position`,
+          reasoning: `Allocated ${secondVaultPct}% to Bonzo Vault — ${secondVault.depositToken}${secondVault.pairedToken ? '/' + secondVault.pairedToken : ''} at ${secondVault.apy.toFixed(1)}% APY. Diversified vault position.`,
           productType: 'bonzo-vault',
           vaultType: secondVault.type,
         });
       }
     } else if (bestLend) {
-      // Only Lend available
       vaultStrategies.push({
         vaultAddress: bestLend.address,
         assetEvmAddress: bestLend.evmAddress,
@@ -201,11 +209,10 @@ export class StrategistAgent extends BaseAgent {
         allocation: 100,
         expectedApy: bestLend.apy,
         riskLevel: bestLend.riskLevel,
-        reasoning: `Allocated 100% to Bonzo Lend — ${bestLend.tokenPair} at ${bestLend.apy.toFixed(1)}% supply APY`,
+        reasoning: `Allocated 100% to Bonzo Lend — ${bestLend.tokenPair} at ${bestLend.apy.toFixed(2)}% supply APY. No matching single-asset vaults found for ${intent.tokenSymbol}.`,
         productType: 'bonzo-lend',
       });
     } else if (bestVault) {
-      // Only Vault available
       vaultStrategies.push({
         vaultAddress: bestVault.vaultAddress,
         assetEvmAddress: bestVault.vaultAddress,
@@ -215,13 +222,16 @@ export class StrategistAgent extends BaseAgent {
         allocation: 100,
         expectedApy: bestVault.apy,
         riskLevel: bestVault.riskLevel,
-        reasoning: `Allocated 100% to Bonzo Vault — ${bestVault.depositToken}${bestVault.pairedToken ? '/' + bestVault.pairedToken : ''} at ${bestVault.apy.toFixed(1)}% APY, auto-compounding concentrated liquidity`,
+        reasoning: `Allocated 100% to Bonzo Vault — ${bestVault.depositToken}${bestVault.pairedToken ? '/' + bestVault.pairedToken : ''} at ${bestVault.apy.toFixed(1)}% APY. Auto-compounding concentrated liquidity.`,
         productType: 'bonzo-vault',
         vaultType: bestVault.type,
       });
     }
 
-    const totalApy = vaultStrategies.reduce((sum, v) => sum + v.expectedApy, 0);
+    // Calculate blended APY (weighted by allocation)
+    const totalApy = vaultStrategies.reduce(
+      (sum, v) => sum + (v.expectedApy * v.allocation / 100), 0
+    );
 
     return {
       id: `strategy-${Date.now()}`,
@@ -238,11 +248,12 @@ export class StrategistAgent extends BaseAgent {
   /**
    * Get Lend/Vault allocation split based on risk tolerance.
    */
-  private getAllocationSplit(risk: RiskTolerance): { lendPct: number; vaultPct: number } {
+  private getAllocationSplit(risk: string): { lendPct: number; vaultPct: number } {
     switch (risk) {
       case 'conservative': return { lendPct: 70, vaultPct: 30 };
       case 'moderate':     return { lendPct: 40, vaultPct: 60 };
       case 'aggressive':   return { lendPct: 20, vaultPct: 80 };
+      default:             return { lendPct: 50, vaultPct: 50 };
     }
   }
 

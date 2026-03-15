@@ -13,6 +13,7 @@
     "@hashgraph/sdk": "^2.51.0",
     "@hiero-ledger/proto": "^2.26.0-beta.3",
     "@hiero-ledger/sdk": "^2.80.0",
+    "@supabase/supabase-js": "^2.99.1",
     "@walletconnect/modal": "^2.7.0",
     "@yieldmind/agents": "*",
     "ethers": "^6.16.0",

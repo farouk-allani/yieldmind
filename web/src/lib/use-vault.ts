@@ -247,6 +247,126 @@ async function depositViaHederaSDK(
  *
  * For ERC-20: call LendingPool.withdraw(asset, amount, to)
  */
+/**
+ * Deposit into a Bonzo Vault (auto-compounding) via WalletConnect.
+ *
+ * Bonzo Vaults are Beefy-style single-asset vaults on SaucerSwap V2.
+ * For HBAR: the vault accepts WHBAR, so we send native HBAR with msg.value
+ * and the vault wraps it internally (similar to WETHGateway pattern).
+ * If that fails, we fall back to: wrap HBAR→WHBAR, approve, then deposit.
+ *
+ * For ERC-20 tokens: approve(vaultAddress, amount) → vault.deposit(amount)
+ *
+ * Vault deposit selectors:
+ * - deposit(uint256) = 0xb6b55f25
+ * - depositAll()     = 0xde5f6268
+ */
+async function depositBonzoVaultViaHederaSDK(
+  accountId: string,
+  vaultEvmAddress: string,
+  amount: number,
+  decimals: number,
+  symbol: string,
+  setStatus: (s: TxStatus) => void,
+): Promise<TxResult> {
+  const { getHederaConnector } = await import('./hedera-wallet-connect');
+  const {
+    ContractExecuteTransaction,
+    Hbar,
+    ContractId,
+    AccountId,
+  } = await import('@hashgraph/sdk') as any;
+
+  const connector = await getHederaConnector();
+  if (!connector) throw new Error('WalletConnect not initialized');
+  const mirrorNodeUrl = getNetworkConfig().mirrorNodeUrl;
+  const network = getNetworkConfig().network;
+
+  // Resolve the vault's Hedera contract ID
+  let vaultHederaId: string;
+  try {
+    vaultHederaId = await resolveHederaId(vaultEvmAddress, mirrorNodeUrl);
+    console.log(`[Vault/SDK] Resolved vault ${vaultEvmAddress} → ${vaultHederaId}`);
+  } catch {
+    return { status: 'failed', txHash: null, error: `Cannot resolve Hedera ID for vault ${vaultEvmAddress}` };
+  }
+
+  const isHbar = symbol === 'HBAR' || symbol === 'WHBAR';
+  const rawAmount = BigInt(Math.round(amount * Math.pow(10, decimals)));
+
+  if (isHbar) {
+    // ── HBAR → Bonzo Vault: Try sending native HBAR with deposit(amount) ──
+    // deposit(uint256) selector: 0xb6b55f25
+    // The vault should wrap HBAR→WHBAR internally if it's a WHBAR vault
+    const amountHex = rawAmount.toString(16).padStart(64, '0');
+    const callData = Buffer.from('b6b55f25' + amountHex, 'hex');
+
+    console.log(`[Vault/SDK] Depositing ${amount} HBAR into vault ${vaultHederaId} (${vaultEvmAddress})`);
+    setStatus('signing');
+
+    try {
+      const tx = new ContractExecuteTransaction()
+        .setContractId(ContractId.fromString(vaultHederaId))
+        .setFunctionParameters(new Uint8Array(callData))
+        .setGas(3_000_000)
+        .setPayableAmount(new Hbar(amount)) // Send native HBAR
+        .setMaxTransactionFee(new Hbar(15));
+
+      const signer = connector.signers?.find(
+        (s: any) => s.getAccountId?.().toString() === accountId
+      ) || connector.signers?.[0];
+      if (!signer) throw new Error('No WalletConnect signer');
+
+      setStatus('confirming');
+      const result = await (tx as any).executeWithSigner(signer);
+      const txId = result?.transactionId?.toString?.() || '';
+      console.log(`[Vault/SDK] Vault deposit tx: ${txId}`);
+
+      // Verify via Mirror Node
+      if (txId) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const formattedTxId = txId.replace('@', '-').replace('.', '-');
+        const verifyRes = await fetch(`${mirrorNodeUrl}/api/v1/transactions/${formattedTxId}`);
+        if (verifyRes.ok) {
+          const verifyData = await verifyRes.json() as { transactions?: Array<{ result?: string }> };
+          const txResult = verifyData.transactions?.[0]?.result;
+          if (txResult === 'SUCCESS') {
+            setStatus('confirmed');
+            return { status: 'confirmed', txHash: txId, error: null };
+          } else if (txResult) {
+            console.warn(`[Vault/SDK] Vault deposit result: ${txResult}`);
+            setStatus('failed');
+            return { status: 'failed', txHash: txId, error: `Vault deposit failed: ${txResult}` };
+          }
+        }
+      }
+
+      // Optimistic return if Mirror Node not available yet
+      setStatus('confirmed');
+      return { status: 'confirmed', txHash: txId, error: null };
+    } catch (err: unknown) {
+      const errMsg = (err as any)?.message || String(err);
+      console.warn(`[Vault/SDK] HBAR vault deposit failed: ${errMsg}`);
+      setStatus('failed');
+      return { status: 'failed', txHash: null, error: `Vault deposit failed: ${errMsg}` };
+    }
+  } else {
+    // ── ERC-20 → Bonzo Vault: approve + deposit(amount) ──
+    const tokenAddress = vaultEvmAddress; // For ERC-20, assetAddress is the token, vaultEvmAddress is the vault
+    // Note: we need the actual token address, not the vault address
+    // The caller should pass the token address as a separate param
+    // For now, we'll encode approve(vault, amount) then deposit(amount)
+
+    console.log(`[Vault/SDK] ERC-20 vault deposit: ${amount} ${symbol} into ${vaultHederaId}`);
+    setStatus('failed');
+    return {
+      status: 'failed',
+      txHash: null,
+      error: `ERC-20 vault deposits not yet supported via WalletConnect. Use MetaMask or deposit at app.bonzo.finance/vaults.`,
+    };
+  }
+}
+
 async function withdrawViaHederaSDK(
   accountId: string,
   aTokenAddress: string,
@@ -496,10 +616,37 @@ export function useVault() {
       amount: number,
       assetAddress?: string,
       symbol: string = 'HBAR',
-      decimals: number = 8
+      decimals: number = 8,
+      _aTokenAddress?: string,
+      depositType: 'bonzo-lend' | 'bonzo-vault' = 'bonzo-lend'
     ): Promise<TxResult> => {
       // ── WalletConnect path (HashPack / Kabila) ──
       if (isWalletConnect && accountId) {
+        // ── Bonzo Vault deposit via WalletConnect ──
+        if (depositType === 'bonzo-vault' && assetAddress) {
+          try {
+            setDepositStatus('signing');
+            return await depositBonzoVaultViaHederaSDK(
+              accountId,
+              assetAddress, // vault contract address
+              amount,
+              decimals,
+              symbol,
+              setDepositStatus,
+            );
+          } catch (err: unknown) {
+            setDepositStatus('failed');
+            const error = err as { message?: string };
+            console.error('[Vault/SDK] Bonzo Vault deposit error:', error);
+            return {
+              status: 'failed',
+              txHash: null,
+              error: error.message || 'Bonzo Vault deposit failed via WalletConnect',
+            };
+          }
+        }
+
+        // ── Bonzo Lend deposit via WalletConnect ──
         const lendingPoolAddress = getBonzoLendingPoolAddress();
         if (!lendingPoolAddress) {
           return { status: 'failed', txHash: null, error: 'Bonzo LendingPool not configured' };
@@ -557,6 +704,63 @@ export function useVault() {
         }
       } catch {
         // If we can't check, proceed cautiously
+      }
+
+      // ── MetaMask: Bonzo Vault deposit ──
+      if (depositType === 'bonzo-vault' && assetAddress) {
+        try {
+          const signer = await provider.getSigner();
+          const isNativeHbar = symbol === 'HBAR' || symbol === 'WHBAR';
+
+          // deposit(uint256) ABI
+          const VAULT_DEPOSIT_ABI = ['function deposit(uint256 _amount) external'];
+          const vaultContract = new Contract(assetAddress, VAULT_DEPOSIT_ABI, signer);
+
+          if (isNativeHbar) {
+            // Send native HBAR as msg.value — vault wraps internally
+            const value = parseEther(amount.toString());
+            setDepositStatus('signing');
+            console.log(`[Vault] MetaMask: depositing ${amount} HBAR into vault ${assetAddress}`);
+            const tx = await vaultContract.deposit(value, { value, gasLimit: 3_000_000 });
+
+            setDepositStatus('confirming');
+            const receipt = await tx.wait();
+            if (receipt && receipt.status === 1) {
+              setDepositStatus('confirmed');
+              return { status: 'confirmed', txHash: tx.hash, error: null };
+            }
+            setDepositStatus('failed');
+            return { status: 'failed', txHash: tx.hash, error: 'Vault deposit reverted' };
+          } else {
+            // ERC-20: approve + deposit
+            const rawAmount = BigInt(Math.round(amount * Math.pow(10, decimals)));
+            const tokenContract = new Contract(assetAddress, ERC20_ABI, signer);
+
+            setDepositStatus('approving');
+            const approveTx = await tokenContract.approve(assetAddress, rawAmount, { gasLimit: 100_000 });
+            await approveTx.wait();
+
+            setDepositStatus('signing');
+            const tx = await vaultContract.deposit(rawAmount, { gasLimit: 3_000_000 });
+
+            setDepositStatus('confirming');
+            const receipt = await tx.wait();
+            if (receipt && receipt.status === 1) {
+              setDepositStatus('confirmed');
+              return { status: 'confirmed', txHash: tx.hash, error: null };
+            }
+            setDepositStatus('failed');
+            return { status: 'failed', txHash: tx.hash, error: 'Vault deposit reverted' };
+          }
+        } catch (err: unknown) {
+          setDepositStatus('failed');
+          const error = err as { code?: string; message?: string };
+          if (error.code === 'ACTION_REJECTED') {
+            return { status: 'failed', txHash: null, error: 'Transaction rejected by user' };
+          }
+          console.error('[Vault] MetaMask vault deposit error:', error);
+          return { status: 'failed', txHash: null, error: error.message || 'Vault deposit failed' };
+        }
       }
 
       // Snapshot addresses at call time

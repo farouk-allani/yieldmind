@@ -27,6 +27,7 @@ const MODAL_MODEL = 'zai-org/GLM-5-FP8';
 
 // OpenRouter free fallback chain (ordered by capability)
 const OPENROUTER_FALLBACKS = [
+  'openrouter/hunter-alpha',
   'qwen/qwen3-next-80b-a3b-instruct:free',
   'openai/gpt-oss-120b:free',
   'z-ai/glm-4.5-air:free',
