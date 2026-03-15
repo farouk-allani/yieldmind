@@ -9,6 +9,7 @@ import { ExecutorAgent } from './agents/executor.js';
 import { SentinelAgent } from './agents/sentinel.js';
 import { AgentCoordinator } from './core/agent-coordinator.js';
 import { LLMClient } from './core/llm-client.js';
+import { KeeperService } from './core/keeper-service.js';
 import { getNetworkConfig, getBonzoNetworkConfig } from './config/index.js';
 import type { UserIntent } from './types/index.js';
 
@@ -44,11 +45,19 @@ export function createRuntime() {
   // Actual deposits are user-signed via MetaMask on the frontend.
   const bonzoLendingPool = new BonzoLendingPoolClient();
 
+  // Intelligent Keeper Service — the Bonzo bounty differentiator
+  // Analyzes vault state + market volatility + news sentiment (RAG)
+  // to make optimal harvest/rebalance timing decisions.
+  const keeperService = new KeeperService(llmClient, bonzoVaultsClient);
+
   // Initialize agents with dependency injection
   const scout = new ScoutAgent(hcsService, bonzoClient, bonzoVaultsClient);
   const strategist = new StrategistAgent(hcsService, llmClient);
   const executor = new ExecutorAgent(hcsService, hederaClient);
   const sentinel = new SentinelAgent(hcsService);
+
+  // Wire keeper into Sentinel for intelligent vault monitoring
+  sentinel.setKeeperService(keeperService);
 
   // Wire up the coordinator
   const coordinator = new AgentCoordinator({
@@ -68,12 +77,14 @@ export function createRuntime() {
   console.log(`   Bonzo Network: ${bonzoConfig.chainName} (data, deposits, verification)`);
   console.log(`   Bonzo LendingPool: ${bonzoLendingPool.isAvailable() ? `Configured (${bonzoConfig.bonzo.lendingPoolAddress}) — deposits via user wallet` : 'Unavailable'}`);
   console.log('   Agents: Scout, Strategist, Executor, Sentinel');
+  console.log('   Keeper: Intelligent harvest/rebalance (volatility + sentiment RAG)');
 
   return {
     coordinator,
     hederaClient,
     hcsService,
     llmClient,
+    keeperService,
     agents: { scout, strategist, executor, sentinel },
   };
 }
@@ -272,3 +283,5 @@ export type {
 } from './types/index.js';
 export { AgentCoordinator } from './core/agent-coordinator.js';
 export { LLMClient } from './core/llm-client.js';
+export { KeeperService } from './core/keeper-service.js';
+export type { KeeperDecision, VolatilityData, SentimentData } from './core/keeper-service.js';

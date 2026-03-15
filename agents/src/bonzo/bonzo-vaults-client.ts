@@ -159,6 +159,8 @@ export class BonzoVaultsClient {
       tvl,
       riskLevel,
       volatility,
+      lastHarvest: vault.lastHarvest || undefined,
+      safetyScore: vault.safetyScore,
     };
   }
 

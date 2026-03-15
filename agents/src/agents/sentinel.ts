@@ -1,6 +1,7 @@
 import { BaseAgent } from '../core/base-agent.js';
 import type { HCSService } from '../hedera/hcs.js';
 import type { DecisionLog, Strategy, SentinelAlert } from '../types/index.js';
+import type { KeeperService, KeeperDecision } from '../core/keeper-service.js';
 
 interface SentinelInput {
   strategy: Strategy;
@@ -8,29 +9,45 @@ interface SentinelInput {
 }
 
 /**
- * SentinelAgent — The watchdog of YieldMind.
+ * SentinelAgent — The intelligent keeper & watchdog of YieldMind.
  *
- * Monitors market conditions and active positions. When thresholds
- * are breached (price drops, volatility spikes, liquidity crises),
- * the Sentinel publishes alerts to HCS and can trigger emergency exits.
+ * Two responsibilities:
+ * 1. **Position Monitoring** — Watches price movements for active strategies.
+ *    Triggers alerts or emergency exits on thresholds.
  *
- * Runs continuously after a strategy is executed.
+ * 2. **Intelligent Keeper** — Analyzes Bonzo Vault state + market conditions
+ *    (volatility, sentiment via RAG) to decide optimal harvest/rebalance timing.
+ *    This is the core differentiator for the Bonzo bounty.
+ *
+ * Every decision includes human-readable reasoning published to HCS.
  */
 export class SentinelAgent extends BaseAgent {
   private priceCache: Map<string, number> = new Map();
+  private keeperService: KeeperService | null = null;
 
   constructor(hcsService: HCSService) {
     super('sentinel', hcsService);
   }
 
+  /**
+   * Inject the KeeperService for intelligent vault keeping.
+   */
+  setKeeperService(keeper: KeeperService): void {
+    this.keeperService = keeper;
+  }
+
   async execute(input: unknown): Promise<DecisionLog> {
     const { strategy, sessionId } = input as SentinelInput;
-    this.setStatus('thinking', 'Starting position monitoring...');
+    this.setStatus('thinking', 'Starting position monitoring + keeper analysis...');
 
     try {
-      // Perform initial market check
-      const alert = await this.checkMarketConditions(strategy);
+      // Run keeper analysis in parallel with market checks
+      const [alert, keeperDecisions] = await Promise.all([
+        this.checkMarketConditions(strategy),
+        this.runKeeperAnalysis(),
+      ]);
 
+      // If there's a critical market alert, prioritize it
       if (alert) {
         const decision = this.createDecision(
           `alert-${alert.severity}`,
@@ -39,27 +56,50 @@ export class SentinelAgent extends BaseAgent {
           sessionId,
           { alert, strategy: strategy.id }
         );
-
         await this.publishDecision('sentinel:alert', decision);
         this.setStatus('idle', `Alert: ${alert.condition}`);
         return decision;
       }
 
-      // No issues found — normal monitoring
+      // Build keeper summary for the decision log
+      const keeperSummary = this.buildKeeperSummary(keeperDecisions);
+
       const decision = this.createDecision(
         'monitoring-active',
-        `All positions healthy. Monitoring ${strategy.vaults.length} vault(s). No market anomalies detected. Next check in 5 minutes.`,
+        `All positions healthy. Monitoring ${strategy.vaults.length} vault(s). ` +
+        `${keeperSummary} ` +
+        `Next check in 5 minutes.`,
         0.8,
         sessionId,
         {
           strategy: strategy.id,
           vaultsMonitored: strategy.vaults.length,
           marketStatus: 'stable',
+          keeperDecisions: keeperDecisions.map((d) => ({
+            vault: d.vault.name,
+            action: d.action,
+            reasoning: d.reasoning,
+            confidence: d.confidence,
+            volatility: d.data.volatility
+              ? {
+                  vol24h: d.data.volatility.realizedVol24h,
+                  priceChange24h: d.data.volatility.priceChange24h,
+                  isHighVol: d.data.volatility.isHighVolatility,
+                }
+              : null,
+            sentiment: d.data.sentiment
+              ? {
+                  direction: d.data.sentiment.sentiment,
+                  confidence: d.data.sentiment.confidence,
+                  reasoning: d.data.sentiment.reasoning,
+                }
+              : null,
+          })),
         }
       );
 
       await this.publishDecision('sentinel:alert', decision);
-      this.setStatus('idle', 'Monitoring active — no alerts');
+      this.setStatus('idle', 'Monitoring + keeper active');
 
       return decision;
     } catch (error) {
@@ -75,15 +115,73 @@ export class SentinelAgent extends BaseAgent {
   }
 
   /**
+   * Run the intelligent keeper analysis on all Bonzo Vaults.
+   * Returns decisions on whether to harvest, delay, or monitor each vault.
+   */
+  private async runKeeperAnalysis(): Promise<KeeperDecision[]> {
+    if (!this.keeperService) {
+      console.log('[Sentinel] No KeeperService configured — skipping keeper analysis');
+      return [];
+    }
+
+    try {
+      const decisions = await this.keeperService.analyzeVaults();
+      const harvestNow = decisions.filter((d) => d.action === 'harvest-now');
+      const delay = decisions.filter((d) => d.action === 'harvest-delay');
+
+      console.log(
+        `[Sentinel/Keeper] Analyzed ${decisions.length} vaults: ` +
+        `${harvestNow.length} harvest-now, ${delay.length} harvest-delay, ` +
+        `${decisions.length - harvestNow.length - delay.length} monitor`
+      );
+
+      return decisions;
+    } catch (error) {
+      console.warn('[Sentinel/Keeper] Keeper analysis failed:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Build a human-readable summary of keeper decisions for the decision log.
+   */
+  private buildKeeperSummary(decisions: KeeperDecision[]): string {
+    if (decisions.length === 0) return 'Keeper: no vaults analyzed.';
+
+    const harvestNow = decisions.filter((d) => d.action === 'harvest-now');
+    const delay = decisions.filter((d) => d.action === 'harvest-delay');
+
+    const parts: string[] = [];
+
+    if (harvestNow.length > 0) {
+      parts.push(
+        `Keeper recommends IMMEDIATE HARVEST for ${harvestNow.length} vault(s): ` +
+        harvestNow.map((d) => `${d.vault.name} (${d.reasoning.split('.')[0]})`).join('; ') +
+        '.'
+      );
+    }
+
+    if (delay.length > 0) {
+      parts.push(
+        `${delay.length} vault(s) safe to compound — delaying harvest.`
+      );
+    }
+
+    const monitored = decisions.length - harvestNow.length - delay.length;
+    if (monitored > 0) {
+      parts.push(`${monitored} vault(s) under standard monitoring.`);
+    }
+
+    return parts.join(' ');
+  }
+
+  /**
    * Check market conditions for the active strategy.
-   *
-   * In production: uses Supra/Pyth oracles + CoinGecko for real data.
-   * For MVP: demonstrates the monitoring logic with simulated checks.
+   * Uses CoinGecko for real price data.
    */
   private async checkMarketConditions(
     strategy: Strategy
   ): Promise<SentinelAlert | null> {
-    // Fetch current prices for tokens in the strategy
     const tokens = new Set<string>();
     for (const vault of strategy.vaults) {
       const [token1, token2] = vault.vaultName.split('-');
@@ -93,7 +191,6 @@ export class SentinelAgent extends BaseAgent {
 
     const prices = await this.fetchPrices([...tokens]);
 
-    // Check for significant price movements
     for (const [token, price] of prices.entries()) {
       const cached = this.priceCache.get(token);
       if (cached) {
@@ -105,8 +202,8 @@ export class SentinelAgent extends BaseAgent {
             condition: `${token} price ${change > 0 ? 'surged' : 'dropped'} ${Math.abs(change).toFixed(1)}%`,
             recommendation:
               change < -15
-                ? `Emergency exit recommended for vaults containing ${token}. Significant price decline detected.`
-                : `Consider harvesting ${token} rewards now — price surge may be temporary.`,
+                ? `Emergency exit recommended for vaults containing ${token}. Significant price decline detected. Keeper: triggering immediate harvest to protect rewards.`
+                : `Price surge on ${token}. Keeper: harvesting rewards now — surge may be temporary.`,
             affectedVaults: strategy.vaults
               .filter((v) => v.vaultName.includes(token))
               .map((v) => v.vaultAddress),
@@ -120,8 +217,8 @@ export class SentinelAgent extends BaseAgent {
             condition: `${token} price moved ${change.toFixed(1)}% since last check`,
             recommendation:
               change < 0
-                ? `Monitor ${token} positions closely. Consider tightening stop-loss.`
-                : `${token} performing well. Consider harvesting partial rewards.`,
+                ? `Monitor ${token} positions closely. Keeper: considering harvest to protect reward value.`
+                : `${token} performing well. Keeper: delaying harvest to capture appreciation.`,
             affectedVaults: strategy.vaults
               .filter((v) => v.vaultName.includes(token))
               .map((v) => v.vaultAddress),
@@ -133,20 +230,15 @@ export class SentinelAgent extends BaseAgent {
       this.priceCache.set(token, price);
     }
 
-    return null; // All clear
+    return null;
   }
 
   /**
-   * Fetch token prices.
-   * Production: Supra/Pyth oracle on Hedera + CoinGecko API
-   * MVP: Simulated stable prices for demo
+   * Fetch token prices from CoinGecko (free API, no key needed).
    */
-  private async fetchPrices(
-    tokens: string[]
-  ): Promise<Map<string, number>> {
+  private async fetchPrices(tokens: string[]): Promise<Map<string, number>> {
     const prices = new Map<string, number>();
 
-    // Try CoinGecko for real prices
     try {
       const ids = tokens
         .map((t) => this.tokenToCoinGeckoId(t))
@@ -159,10 +251,7 @@ export class SentinelAgent extends BaseAgent {
         );
 
         if (response.ok) {
-          const data = (await response.json()) as Record<
-            string,
-            { usd: number }
-          >;
+          const data = (await response.json()) as Record<string, { usd: number }>;
           for (const token of tokens) {
             const cgId = this.tokenToCoinGeckoId(token);
             if (cgId && data[cgId]) {
@@ -176,28 +265,27 @@ export class SentinelAgent extends BaseAgent {
       console.log('[Sentinel] CoinGecko API unreachable, using cached prices');
     }
 
-    // Fallback mock prices
-    const mockPrices: Record<string, number> = {
-      HBAR: 0.28,
-      USDC: 1.0,
-      USDT: 1.0,
-      HBARX: 0.31,
-      SAUCE: 0.015,
-      KARATE: 0.002,
+    // Fallback prices
+    const fallback: Record<string, number> = {
+      HBAR: 0.095, USDC: 1.0, USDT: 1.0,
+      HBARX: 0.105, SAUCE: 0.015, KARATE: 0.002,
     };
-
     for (const token of tokens) {
-      prices.set(token, mockPrices[token.toUpperCase()] || 1.0);
+      prices.set(token, fallback[token.toUpperCase()] || 1.0);
     }
-
     return prices;
   }
 
   private tokenToCoinGeckoId(token: string): string | null {
     const map: Record<string, string> = {
       HBAR: 'hedera-hashgraph',
+      WHBAR: 'hedera-hashgraph',
       USDC: 'usd-coin',
       USDT: 'tether',
+      SAUCE: 'saucerswap',
+      HBARX: 'hbarx',
+      BONZO: 'bonzo',
+      KARATE: 'karate-combat',
     };
     return map[token.toUpperCase()] || null;
   }

@@ -15,6 +15,9 @@ import {
   ArrowDownToLine,
   LogOut,
   Loader2,
+  Zap,
+  Activity,
+  Brain,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
@@ -39,6 +42,60 @@ export default function PortfolioPage() {
   const [copied, setCopied] = useState(false);
   const [copiedContract, setCopiedContract] = useState(false);
   const [mounted, setMounted] = useState(false);
+
+  // Keeper analysis state
+  interface KeeperVaultDecision {
+    vault: string;
+    vaultAddress: string;
+    strategyAddress: string;
+    apy: number;
+    tvl: number;
+    action: string;
+    confidence: number;
+    reasoning: string;
+    volatility: {
+      token: string;
+      realizedVol24h: number;
+      realizedVol7d: number;
+      priceChange24h: number;
+      currentPrice: number;
+      isHighVolatility: boolean;
+    } | null;
+    sentiment: {
+      direction: string;
+      confidence: number;
+      reasoning: string;
+      headlines: string[];
+    } | null;
+  }
+  interface KeeperResponse {
+    timestamp: string;
+    summary: {
+      totalVaults: number;
+      harvestNow: number;
+      harvestDelay: number;
+      monitoring: number;
+    };
+    decisions: KeeperVaultDecision[];
+  }
+  const [keeperData, setKeeperData] = useState<KeeperResponse | null>(null);
+  const [keeperLoading, setKeeperLoading] = useState(false);
+  const [keeperError, setKeeperError] = useState<string | null>(null);
+
+  const fetchKeeper = useCallback(async () => {
+    setKeeperLoading(true);
+    setKeeperError(null);
+    try {
+      const res = await fetch('/api/keeper');
+      if (!res.ok) throw new Error(`Keeper API returned ${res.status}`);
+      const data = await res.json() as KeeperResponse;
+      setKeeperData(data);
+    } catch (err) {
+      setKeeperError(err instanceof Error ? err.message : 'Failed to fetch keeper analysis');
+    } finally {
+      setKeeperLoading(false);
+    }
+  }, []);
 
   // Withdraw modal state
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
@@ -666,6 +723,176 @@ export default function PortfolioPage() {
               </motion.div>
             )}
 
+            {/* Intelligent Keeper Analysis */}
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+              className="glass-card overflow-hidden mb-8"
+            >
+              <div className="px-5 py-4 border-b border-border-subtle flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-full bg-borrow/10 p-2">
+                    <Brain className="w-4 h-4 text-borrow" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-text-primary">
+                      Intelligent Keeper Agent
+                    </h3>
+                    <p className="text-[11px] text-text-muted mt-0.5">
+                      AI-powered harvest timing using volatility + sentiment analysis
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={fetchKeeper}
+                  disabled={keeperLoading}
+                  className="flex items-center gap-2 px-3 h-9 rounded-[8px] bg-surface border border-border-subtle text-sm text-text-secondary hover:bg-surface-hover transition-colors disabled:opacity-50"
+                >
+                  {keeperLoading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Zap className="w-3.5 h-3.5" />
+                  )}
+                  {keeperLoading ? 'Analyzing...' : keeperData ? 'Re-analyze' : 'Run Analysis'}
+                </button>
+              </div>
+
+              {keeperError && (
+                <div className="px-5 py-3 bg-danger/5 border-b border-danger/10">
+                  <p className="text-sm text-danger">{keeperError}</p>
+                </div>
+              )}
+
+              {!keeperData && !keeperLoading && !keeperError && (
+                <div className="p-8 text-center">
+                  <Brain className="w-10 h-10 text-text-muted mx-auto mb-3 opacity-40" />
+                  <p className="text-sm text-text-muted mb-1">
+                    Click &quot;Run Analysis&quot; to see keeper decisions
+                  </p>
+                  <p className="text-[11px] text-text-muted">
+                    Analyzes Bonzo Vaults using real-time volatility data from CoinGecko and AI sentiment analysis
+                  </p>
+                </div>
+              )}
+
+              {keeperLoading && !keeperData && (
+                <div className="p-8 text-center">
+                  <Loader2 className="w-8 h-8 text-borrow mx-auto mb-3 animate-spin" />
+                  <p className="text-sm text-text-secondary">
+                    Fetching market data and running AI analysis...
+                  </p>
+                  <p className="text-[11px] text-text-muted mt-1">
+                    This may take 10-20 seconds (CoinGecko + LLM reasoning)
+                  </p>
+                </div>
+              )}
+
+              {keeperData && (
+                <>
+                  {/* Summary cards */}
+                  <div className="grid grid-cols-3 border-b border-border-subtle">
+                    <div className="px-5 py-3 text-center border-r border-border-subtle">
+                      <div className="text-lg font-bold text-supply">{keeperData.summary.harvestNow}</div>
+                      <div className="text-[11px] text-text-muted">Harvest Now</div>
+                    </div>
+                    <div className="px-5 py-3 text-center border-r border-border-subtle">
+                      <div className="text-lg font-bold text-points">{keeperData.summary.harvestDelay}</div>
+                      <div className="text-[11px] text-text-muted">Harvest Later</div>
+                    </div>
+                    <div className="px-5 py-3 text-center">
+                      <div className="text-lg font-bold text-text-secondary">{keeperData.summary.monitoring}</div>
+                      <div className="text-[11px] text-text-muted">Monitoring</div>
+                    </div>
+                  </div>
+
+                  {/* Vault decisions */}
+                  <div className="divide-y divide-border-subtle">
+                    {keeperData.decisions.map((d, i) => (
+                      <div key={i} className="px-5 py-4 hover:bg-surface/50 transition-colors">
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center gap-2.5">
+                            <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1 ${
+                              d.action === 'harvest-now' ? 'bg-supply' :
+                              d.action === 'harvest-delay' ? 'bg-points' :
+                              d.action === 'alert' ? 'bg-danger' : 'bg-text-muted'
+                            }`} />
+                            <div>
+                              <div className="text-sm font-medium text-text-primary">{d.vault}</div>
+                              <div className="text-[11px] text-text-muted">
+                                APY {d.apy.toFixed(1)}% &middot; TVL ${d.tvl >= 1000 ? `${(d.tvl / 1000).toFixed(1)}K` : d.tvl.toFixed(0)}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${
+                              d.action === 'harvest-now' ? 'bg-supply/10 text-supply' :
+                              d.action === 'harvest-delay' ? 'bg-points/10 text-points' :
+                              d.action === 'alert' ? 'bg-danger/10 text-danger' : 'bg-surface text-text-muted'
+                            }`}>
+                              {d.action === 'harvest-now' ? 'Harvest Now' :
+                               d.action === 'harvest-delay' ? 'Harvest Later' :
+                               d.action === 'alert' ? 'Alert' : 'Monitor'}
+                            </span>
+                            <span className="text-[11px] text-text-muted">
+                              {(d.confidence * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Reasoning */}
+                        <p className="text-[12px] text-text-secondary leading-relaxed ml-[18px] mb-2">
+                          {d.reasoning}
+                        </p>
+
+                        {/* Volatility + Sentiment row */}
+                        <div className="flex flex-wrap gap-3 ml-[18px]">
+                          {d.volatility && (
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] bg-surface text-[11px]">
+                              <Activity className="w-3 h-3 text-text-muted" />
+                              <span className="text-text-muted">Vol 24h:</span>
+                              <span className={d.volatility.isHighVolatility ? 'text-danger font-medium' : 'text-text-primary'}>
+                                {d.volatility.realizedVol24h.toFixed(1)}%
+                              </span>
+                              <span className="text-text-muted mx-0.5">|</span>
+                              <span className="text-text-muted">Price:</span>
+                              <span className={d.volatility.priceChange24h >= 0 ? 'text-supply' : 'text-danger'}>
+                                {d.volatility.priceChange24h >= 0 ? '+' : ''}{d.volatility.priceChange24h.toFixed(1)}%
+                              </span>
+                            </div>
+                          )}
+                          {d.sentiment && (
+                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] bg-surface text-[11px]">
+                              <Brain className="w-3 h-3 text-text-muted" />
+                              <span className="text-text-muted">Sentiment:</span>
+                              <span className={
+                                d.sentiment.direction === 'bullish' ? 'text-supply font-medium' :
+                                d.sentiment.direction === 'bearish' ? 'text-danger font-medium' : 'text-text-primary'
+                              }>
+                                {d.sentiment.direction}
+                              </span>
+                              <span className="text-text-muted">
+                                ({(d.sentiment.confidence * 100).toFixed(0)}%)
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Footer */}
+                  <div className="px-5 py-3 border-t border-border-subtle bg-surface/30">
+                    <p className="text-[11px] text-text-muted">
+                      Last analyzed: {new Date(keeperData.timestamp).toLocaleString()} &middot;
+                      Data: CoinGecko (volatility) + LLM RAG (sentiment) &middot;
+                      {keeperData.summary.totalVaults} Bonzo Vaults scanned
+                    </p>
+                  </div>
+                </>
+              )}
+            </motion.div>
+
             {/* Wallet & Contract details row */}
             <div className={`grid grid-cols-1 ${vaultAddress ? 'lg:grid-cols-3' : 'lg:grid-cols-2'} gap-6 mb-8`}>
               {/* Wallet card */}
@@ -781,7 +1008,7 @@ export default function PortfolioPage() {
                 </motion.div>
               )}
 
-              {/* Sentinel Agent card */}
+              {/* Sentinel + Keeper Agent card */}
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -789,20 +1016,32 @@ export default function PortfolioPage() {
                 className="glass-card p-5"
               >
                 <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-4">
-                  Sentinel Agent
+                  Sentinel + Keeper Agent
                 </h3>
                 <div className="space-y-3">
                   <DetailRow label="Status">
                     <div className="flex items-center gap-1.5">
-                      <div className={`w-1.5 h-1.5 rounded-full ${userDeposited > 0 ? 'bg-supply animate-pulse' : 'bg-text-muted'}`} />
-                      <span className={`text-sm ${userDeposited > 0 ? 'text-supply' : 'text-text-muted'}`}>
-                        {userDeposited > 0 ? 'Monitoring' : 'Idle'}
+                      <div className={`w-1.5 h-1.5 rounded-full ${
+                        keeperData ? 'bg-supply animate-pulse' :
+                        (bonzo.positions.length > 0 || userDeposited > 0) ? 'bg-points' : 'bg-text-muted'
+                      }`} />
+                      <span className={`text-sm ${
+                        keeperData ? 'text-supply' :
+                        (bonzo.positions.length > 0 || userDeposited > 0) ? 'text-points' : 'text-text-muted'
+                      }`}>
+                        {keeperData ? 'Active — Last ran keeper analysis' :
+                         (bonzo.positions.length > 0 || userDeposited > 0) ? 'Ready' : 'Idle'}
                       </span>
                     </div>
                   </DetailRow>
-                  <DetailRow label="Watches">
+                  <DetailRow label="Keeper">
                     <span className="text-sm text-text-primary">
-                      Token prices & volatility
+                      Harvest timing via volatility + sentiment
+                    </span>
+                  </DetailRow>
+                  <DetailRow label="Data Sources">
+                    <span className="text-sm text-text-primary">
+                      CoinGecko + LLM RAG
                     </span>
                   </DetailRow>
                   <DetailRow label="Alerts">
@@ -810,16 +1049,10 @@ export default function PortfolioPage() {
                       &gt;8% warning, &gt;15% critical
                     </span>
                   </DetailRow>
-                  <DetailRow label="Action">
-                    <span className="text-sm text-text-primary">
-                      Emergency exit on critical
-                    </span>
-                  </DetailRow>
                   <div className="pt-2 text-[11px] text-text-muted">
-                    The Sentinel agent monitors real-time token prices via CoinGecko.
-                    If it detects &gt;15% price drops, it recommends emergency exits.
-                    All alerts are logged to HCS for transparency. View alerts in the
-                    Decision Trail on the main chat page.
+                    The Sentinel monitors token prices and the Keeper Agent analyzes
+                    optimal harvest timing using realized volatility (CoinGecko price history)
+                    and AI sentiment analysis (RAG). Decisions are logged to HCS.
                   </div>
                 </div>
               </motion.div>

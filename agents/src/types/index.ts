@@ -88,6 +88,10 @@ export interface BonzoVaultInfo {
   volatility: string;
   /** Price per full share (vault token → underlying) */
   pricePerShare?: number;
+  /** Last harvest timestamp (ISO 8601) */
+  lastHarvest?: string;
+  /** Safety score from Bonzo API (0-10) */
+  safetyScore?: number;
 }
 
 export interface VaultStrategy {
