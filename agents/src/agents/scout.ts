@@ -1,8 +1,9 @@
 import { BaseAgent } from '../core/base-agent.js';
 import type { HCSService } from '../hedera/hcs.js';
 import type { BonzoVaultClient } from '../bonzo/vault-client.js';
+import type { BonzoVaultsClient } from '../bonzo/bonzo-vaults-client.js';
 import { normalizeTokenSymbol } from '../bonzo/vault-client.js';
-import type { DecisionLog, VaultInfo, RiskTolerance } from '../types/index.js';
+import type { DecisionLog, VaultInfo, BonzoVaultInfo, RiskTolerance } from '../types/index.js';
 
 interface ScoutInput {
   riskTolerance: RiskTolerance;
@@ -10,62 +11,81 @@ interface ScoutInput {
 }
 
 /**
- * ScoutAgent — Scans Bonzo Finance lending reserves on Hedera.
+ * ScoutAgent — Scans Bonzo Finance products on Hedera.
  *
- * Fetches REAL data from Bonzo's mainnet API + on-chain contract reads.
- * Evaluates supply APY, risk metrics (LTV), and liquidity depth.
- * Publishes vault scan findings to HCS for other agents to consume.
+ * Scans both:
+ * - Bonzo Lend: lending/borrowing reserves (supply APY)
+ * - Bonzo Vaults: auto-compounding concentrated liquidity vaults (Single/Dual Asset DEX, Leveraged LST)
+ *
+ * Publishes findings to HCS for other agents to consume.
  */
 export class ScoutAgent extends BaseAgent {
   private bonzoClient: BonzoVaultClient;
+  private bonzoVaultsClient: BonzoVaultsClient | null;
 
-  constructor(hcsService: HCSService, bonzoClient: BonzoVaultClient) {
+  constructor(
+    hcsService: HCSService,
+    bonzoClient: BonzoVaultClient,
+    bonzoVaultsClient?: BonzoVaultsClient
+  ) {
     super('scout', hcsService);
     this.bonzoClient = bonzoClient;
+    this.bonzoVaultsClient = bonzoVaultsClient || null;
   }
 
   async execute(input: unknown): Promise<DecisionLog> {
     const { riskTolerance, tokenSymbol } = input as ScoutInput;
-    this.setStatus('thinking', 'Scanning Bonzo lending reserves...');
+    this.setStatus('thinking', 'Scanning Bonzo Lend reserves and Bonzo Vaults...');
 
     try {
-      // Fetch real vault data from Bonzo API + on-chain
-      const vaults = await this.bonzoClient.getVaults();
+      // Fetch data from both Bonzo Lend and Bonzo Vaults in parallel
+      const [lendReserves, vaults] = await Promise.all([
+        this.bonzoClient.getVaults(),
+        this.bonzoVaultsClient?.getVaults() ?? Promise.resolve([]),
+      ]);
 
-      if (vaults.length === 0) {
-        this.setStatus('error', 'No vault data available');
+      if (lendReserves.length === 0 && vaults.length === 0) {
+        this.setStatus('error', 'No data available');
         return this.createDecision(
           'vault-scan-empty',
-          'Could not fetch Bonzo reserve data. The Bonzo API or Hedera Mirror Node may be unreachable.',
+          'Could not fetch Bonzo data. The Bonzo API or Hedera Mirror Node may be unreachable.',
           0.1,
           '',
-          { vaultsScanned: 0, vaultsMatched: 0, topVaults: [] }
+          { lendScanned: 0, vaultsScanned: 0, topResults: [] }
         );
       }
 
-      // Score and filter vaults based on user's risk tolerance
-      const scored = this.scoreVaults(vaults, riskTolerance, tokenSymbol);
+      // Score Bonzo Lend reserves
+      const scoredLend = this.scoreVaults(lendReserves, riskTolerance, tokenSymbol);
 
-      // Build decision with reasoning
-      const topVaults = scored.slice(0, 5);
-      const reasoning = this.buildReasoning(topVaults, riskTolerance);
+      // Score Bonzo Vaults
+      const scoredVaults = this.scoreBonzoVaults(vaults, riskTolerance, tokenSymbol);
+
+      // Combine and rank all options
+      const topLend = scoredLend.slice(0, 3);
+      const topVaults = scoredVaults.slice(0, 5);
+      const reasoning = this.buildCombinedReasoning(topLend, topVaults, riskTolerance);
 
       const decision = this.createDecision(
         'vault-scan-complete',
         reasoning,
-        topVaults.length > 0 ? 0.85 : 0.3,
+        (topLend.length > 0 || topVaults.length > 0) ? 0.85 : 0.3,
         '',
         {
+          lendScanned: lendReserves.length,
           vaultsScanned: vaults.length,
-          vaultsMatched: topVaults.length,
-          topVaults,
+          topLendReserves: topLend,
+          topBonzoVaults: topVaults,
           filterCriteria: { riskTolerance, tokenSymbol },
           dataSource: 'bonzo-mainnet-live',
         }
       );
 
       await this.publishDecision('scout:vault-scan', decision);
-      this.setStatus('idle', `Found ${topVaults.length} matching vaults`);
+      this.setStatus(
+        'idle',
+        `Found ${topLend.length} lending reserves + ${topVaults.length} vaults`
+      );
 
       return decision;
     } catch (error) {
@@ -118,6 +138,82 @@ export class ScoutAgent extends BaseAgent {
         return { ...vault, score };
       })
       .sort((a, b) => b.score - a.score);
+  }
+
+  /**
+   * Score Bonzo Vaults based on risk tolerance, deposit token match.
+   */
+  private scoreBonzoVaults(
+    vaults: BonzoVaultInfo[],
+    riskTolerance: RiskTolerance,
+    tokenSymbol: string
+  ): (BonzoVaultInfo & { score: number })[] {
+    const riskWeights: Record<RiskTolerance, Record<RiskTolerance, number>> = {
+      conservative: { conservative: 1.0, moderate: 0.5, aggressive: 0.1 },
+      moderate: { conservative: 0.6, moderate: 1.0, aggressive: 0.6 },
+      aggressive: { conservative: 0.2, moderate: 0.6, aggressive: 1.0 },
+    };
+
+    const normalizedSymbol = normalizeTokenSymbol(tokenSymbol);
+    const displayNorm = normalizedSymbol === 'WHBAR' ? 'HBAR' : normalizedSymbol;
+
+    return vaults
+      .map((vault) => {
+        const riskScore = riskWeights[riskTolerance][vault.riskLevel] || 0.5;
+        // Boost score if deposit token matches user intent
+        const tokenMatch =
+          vault.depositToken.toUpperCase() === displayNorm ||
+          vault.depositToken.toUpperCase() === normalizedSymbol
+            ? 1.0
+            : 0.3;
+        const score = riskScore * 0.4 + tokenMatch * 0.4 + 0.2;
+        return { ...vault, score };
+      })
+      .sort((a, b) => b.score - a.score);
+  }
+
+  /**
+   * Build combined reasoning covering both Bonzo Lend and Bonzo Vaults.
+   */
+  private buildCombinedReasoning(
+    topLend: (VaultInfo & { score: number })[],
+    topVaults: (BonzoVaultInfo & { score: number })[],
+    risk: RiskTolerance
+  ): string {
+    const parts: string[] = [];
+
+    if (topLend.length > 0) {
+      const best = topLend[0];
+      const tvlStr =
+        best.tvl >= 1_000_000
+          ? `$${(best.tvl / 1_000_000).toFixed(2)}M`
+          : `$${(best.tvl / 1000).toFixed(0)}K`;
+      parts.push(
+        `Bonzo Lend: Best lending reserve for ${risk} risk is ${best.name} ` +
+        `at ${best.apy.toFixed(2)}% supply APY with ${tvlStr} TVL (score ${best.score.toFixed(2)}).`
+      );
+    }
+
+    if (topVaults.length > 0) {
+      const best = topVaults[0];
+      const strategyLabel =
+        best.type === 'single-asset-dex' ? 'Single Asset DEX' :
+        best.type === 'dual-asset-dex' ? 'Dual Asset DEX' :
+        'Leveraged LST';
+      parts.push(
+        `Bonzo Vaults: Best vault match is ${best.name} ` +
+        `(${strategyLabel}, ${best.volatility} volatility). ` +
+        `Deposit ${best.depositToken}${best.pairedToken ? ` paired with ${best.pairedToken}` : ''}. ` +
+        `${topVaults.length > 1 ? `${topVaults.length - 1} other vaults also available.` : ''}`
+      );
+    }
+
+    if (parts.length === 0) {
+      return `Scanned Bonzo products but found no matches for ${risk} risk tolerance.`;
+    }
+
+    return `Scanned Bonzo Lend (${topLend.length} reserves) + Bonzo Vaults (${topVaults.length} vaults). ` +
+      parts.join(' ');
   }
 
   /**

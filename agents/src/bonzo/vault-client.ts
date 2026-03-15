@@ -1,5 +1,6 @@
 import type { VaultInfo, RiskTolerance } from '../types/index.js';
 import { getBonzoNetworkConfig } from '../config/index.js';
+import { BONZO_TOKENS, getToken } from '../config/bonzo-contracts.js';
 
 /**
  * BonzoVaultClient — Fetches REAL data from Bonzo Finance on Hedera.
@@ -18,9 +19,10 @@ import { getBonzoNetworkConfig } from '../config/index.js';
 // Bonzo uses WHBAR (Wrapped HBAR) for lending pools. Users say "HBAR"
 // but the actual pool asset is WHBAR. This mapping lets the Scout and
 // Strategist seamlessly translate between user intent and pool reality.
+// Address sourced from bonzo-contracts.ts (single source of truth).
 export const WHBAR_EVM_ADDRESS: Record<string, string> = {
   testnet: '', // no WHBAR pool on testnet
-  mainnet: '0x0000000000000000000000000000000000163b5a',
+  mainnet: BONZO_TOKENS.WHBAR.evmAddress,
 };
 
 /**

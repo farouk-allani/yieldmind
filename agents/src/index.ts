@@ -1,6 +1,7 @@
 import { HederaClient } from './hedera/client.js';
 import { HCSService } from './hedera/hcs.js';
 import { BonzoVaultClient } from './bonzo/vault-client.js';
+import { BonzoVaultsClient } from './bonzo/bonzo-vaults-client.js';
 import { BonzoLendingPoolClient } from './bonzo/lending-pool-client.js'; // read-only (getUserAccountData)
 import { ScoutAgent } from './agents/scout.js';
 import { StrategistAgent } from './agents/strategist.js';
@@ -35,14 +36,16 @@ export function createRuntime() {
     );
   }
 
-  // Bonzo vault data client (reads real mainnet data for strategy building)
+  // Bonzo Lend data client (reads real mainnet data for lending reserves)
   const bonzoClient = new BonzoVaultClient();
+  // Bonzo Vaults client (reads on-chain data for auto-compounding vaults)
+  const bonzoVaultsClient = new BonzoVaultsClient();
   // Bonzo LendingPool client — read-only (getUserAccountData).
   // Actual deposits are user-signed via MetaMask on the frontend.
   const bonzoLendingPool = new BonzoLendingPoolClient();
 
   // Initialize agents with dependency injection
-  const scout = new ScoutAgent(hcsService, bonzoClient);
+  const scout = new ScoutAgent(hcsService, bonzoClient, bonzoVaultsClient);
   const strategist = new StrategistAgent(hcsService, llmClient);
   const executor = new ExecutorAgent(hcsService, hederaClient);
   const sentinel = new SentinelAgent(hcsService);
