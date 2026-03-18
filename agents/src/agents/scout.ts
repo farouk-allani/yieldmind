@@ -160,10 +160,13 @@ export class ScoutAgent extends BaseAgent {
     return vaults
       .map((vault) => {
         const riskScore = riskWeights[riskTolerance][vault.riskLevel] || 0.5;
-        // Boost score if deposit token matches user intent
+        // Boost score if user's token appears in the vault pair
+        const depositUp = vault.depositToken.toUpperCase();
+        const pairedUp = vault.pairedToken?.toUpperCase() || '';
         const tokenMatch =
-          vault.depositToken.toUpperCase() === displayNorm ||
-          vault.depositToken.toUpperCase() === normalizedSymbol
+          depositUp === displayNorm || depositUp === normalizedSymbol ||
+          pairedUp === displayNorm || pairedUp === normalizedSymbol ||
+          depositUp.includes(displayNorm) || depositUp.includes(normalizedSymbol)
             ? 1.0
             : 0.3;
         const score = riskScore * 0.4 + tokenMatch * 0.4 + 0.2;

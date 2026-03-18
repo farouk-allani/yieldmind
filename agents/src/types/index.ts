@@ -38,6 +38,10 @@ export interface UserIntent {
   riskTolerance: RiskTolerance;
   targetAmount: number; // in HBAR or token units
   tokenSymbol: string; // e.g., 'HBAR', 'USDC'
+  /** Secondary token for dual-asset vault deposits (e.g., user has both USDC + HBAR) */
+  secondaryToken?: string;
+  /** Amount of secondary token */
+  secondaryAmount?: number;
   preferences: string[]; // extracted preferences like "stable", "high yield", etc.
   sessionId: string;
 }
@@ -108,6 +112,21 @@ export interface VaultStrategy {
   productType?: 'bonzo-lend' | 'bonzo-vault';
   /** Vault type (only for bonzo-vault) */
   vaultType?: BonzoVaultType;
+  /** Dual-token deposit data — present when both tokens are provided */
+  dualTokenDeposit?: {
+    token0Symbol: string;     // e.g., 'USDC'
+    token0Address: string;    // EVM address
+    token0Decimals: number;
+    token0Amount: number;     // human-readable amount
+    token1Symbol: string;     // e.g., 'HBAR'
+    token1Address: string;    // EVM address
+    token1Decimals: number;
+    token1Amount: number;     // human-readable amount
+    /** deposit(uint256,uint256,uint256) selector: 0x00aeef8a */
+    depositSelector: string;
+    /** Vault Hedera contract ID (0.0.xxx) for WalletConnect */
+    vaultContractId: string;
+  };
 }
 
 // --- Strategy Types ---

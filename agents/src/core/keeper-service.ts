@@ -50,11 +50,21 @@ export interface SentimentData {
   headlines: string[];     // news headlines used
 }
 
+export interface HarvestCalldata {
+  strategyAddress: string;  // EVM address of strategy contract
+  strategyContractId: string;  // Hedera ID (0.0.xxx)
+  functionSelector: string;  // 0x0e5c011e = harvest(address)
+  callerAddress: string;  // padded caller EVM address
+  fullCalldata: string;  // complete calldata hex
+  vaultName: string;
+}
+
 export interface KeeperDecision {
   vault: BonzoVaultInfo;
   action: 'harvest-now' | 'harvest-delay' | 'monitor' | 'alert';
   reasoning: string;
   confidence: number;
+  harvestCalldata?: HarvestCalldata;  // present when action === 'harvest-now'
   data: {
     volatility?: VolatilityData;
     sentiment?: SentimentData;
@@ -552,5 +562,77 @@ Respond with ONLY valid JSON (no markdown, no explanation outside JSON):
         sentiment: sentiment || undefined,
       },
     };
+  }
+
+  // ── On-chain harvest execution ──────────────────────────────────
+
+  /**
+   * Build harvest calldata for a vault's strategy contract.
+   *
+   * Function: harvest(address) — selector 0x0e5c011e
+   * The caller receives a small call fee as incentive.
+   *
+   * @param vault - The vault whose strategy to harvest
+   * @param callerEvmAddress - The user's EVM address (gets the call fee)
+   * @returns HarvestCalldata ready to be signed by the user's wallet
+   */
+  buildHarvestCalldata(
+    vault: BonzoVaultInfo,
+    callerEvmAddress: string,
+  ): HarvestCalldata {
+    // harvest(address) selector: 0x0e5c011e
+    const selector = '0e5c011e';
+    // Pad the caller address to 32 bytes (remove 0x prefix, pad left with zeros)
+    const cleanAddr = callerEvmAddress.replace('0x', '').toLowerCase().padStart(64, '0');
+    const fullCalldata = '0x' + selector + cleanAddr;
+
+    // Resolve strategy Hedera ID from the API data
+    // The BonzoVaultsClient already provides strategyAddress (EVM) and we can
+    // look up the Hedera contract ID via mirror node, but the API also gives it
+    const strategyContractId = this.resolveStrategyContractId(vault);
+
+    return {
+      strategyAddress: vault.strategyAddress,
+      strategyContractId,
+      functionSelector: '0x' + selector,
+      callerAddress: callerEvmAddress,
+      fullCalldata,
+      vaultName: vault.name,
+    };
+  }
+
+  /**
+   * Resolve the Hedera contract ID for a vault's strategy.
+   * Uses the Bonzo Vaults API data which includes contractId fields.
+   */
+  private resolveStrategyContractId(vault: BonzoVaultInfo): string {
+    // Known strategy contract IDs from the Bonzo Vaults API
+    const STRATEGY_IDS: Record<string, string> = {
+      '0x157EB9ba35d70560D44394206D4a03885C33c6d5': '0.0.10164472', // USDC-HBAR
+      '0xcfba07324bd207C3ED41416a9a36f8184F9a2134': '0.0.10164552', // BONZO-XBONZO (vault addr used as key)
+      '0x8AEE31dFF6264074a1a3929432070E1605F6b783': '0.0.10164571', // SAUCE-XSAUCE
+      '0x0171baa37fC9f56c98bD56FEB32bC28342944C6e': '0.0.10164768', // USDC-SAUCE
+    };
+    // Try by strategy address first, then by vault address
+    return STRATEGY_IDS[vault.strategyAddress] || STRATEGY_IDS[vault.vaultAddress] || '';
+  }
+
+  /**
+   * Get harvest decisions with calldata for all vaults recommending harvest-now.
+   * Used by the API to provide actionable harvest data to the frontend.
+   */
+  async getHarvestRecommendations(
+    callerEvmAddress: string,
+  ): Promise<KeeperDecision[]> {
+    const decisions = await this.analyzeVaults();
+
+    // Attach calldata to harvest-now decisions
+    for (const d of decisions) {
+      if (d.action === 'harvest-now' && d.vault.strategyAddress) {
+        d.harvestCalldata = this.buildHarvestCalldata(d.vault, callerEvmAddress);
+      }
+    }
+
+    return decisions;
   }
 }

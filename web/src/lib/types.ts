@@ -49,7 +49,7 @@ export interface VaultInfo {
 }
 
 export interface VaultStrategy {
-  vaultAddress: string; // HTS address (0.0.xxxxx)
+  vaultAddress: string; // HTS address (0.0.xxxxx) for Lend, or EVM address for Vaults
   assetEvmAddress: string; // EVM address (0x...) — for on-chain deposits
   symbol: string; // Token symbol — determines HBAR vs ERC-20 deposit flow
   decimals: number; // Token decimals for correct amount formatting
@@ -60,6 +60,21 @@ export interface VaultStrategy {
   reasoning: string;
   productType?: 'bonzo-lend' | 'bonzo-vault';
   vaultType?: string;
+  /** Dual-token deposit data — present when both tokens are provided */
+  dualTokenDeposit?: {
+    token0Symbol: string;
+    token0Address: string;
+    token0Decimals: number;
+    token0Amount: number;
+    token1Symbol: string;
+    token1Address: string;
+    token1Decimals: number;
+    token1Amount: number;
+    /** deposit(uint256,uint256,uint256) selector: 0x00aeef8a */
+    depositSelector: string;
+    /** Vault Hedera contract ID (0.0.xxx) for WalletConnect */
+    vaultContractId: string;
+  };
 }
 
 export interface UserIntent {
@@ -67,6 +82,10 @@ export interface UserIntent {
   riskTolerance: RiskTolerance;
   targetAmount: number;
   tokenSymbol: string;
+  /** Secondary token for dual-asset vault deposits (e.g., user has both USDC + HBAR) */
+  secondaryToken?: string;
+  /** Amount of secondary token */
+  secondaryAmount?: number;
   preferences: string[];
   sessionId: string;
 }

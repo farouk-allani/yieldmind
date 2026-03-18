@@ -100,6 +100,8 @@ Respond with ONLY valid JSON (no markdown, no explanation):
   "riskTolerance": "conservative" | "moderate" | "aggressive",
   "targetAmount": <number>,
   "tokenSymbol": "HBAR" | "USDC" | "USDT",
+  "secondaryToken": null | "HBAR" | "USDC" | "USDT",
+  "secondaryAmount": null | <number>,
   "preferences": ["stable-pairs" | "high-apy" | "diversified"]
 }
 
@@ -109,7 +111,10 @@ Rules:
 - "balanced", "moderate", "medium" -> moderate
 - "aggressive", "max", "high yield", "risky", "yolo" -> aggressive
 - Default: moderate risk, 100 HBAR, no preferences
-- Extract the numeric amount and token from the message`;
+- Extract the numeric amount and token from the message
+- IMPORTANT: If the user mentions TWO tokens (e.g., "2 USDC and 20 HBAR", "both USDC and HBAR"), set secondaryToken and secondaryAmount. The primary token should be the first one mentioned, secondary is the second.
+- If the user says "equivalent" or "matching" for the second token, set secondaryAmount to 0 (the system will calculate it)
+- If only one token is mentioned, set secondaryToken and secondaryAmount to null`;
 
 /**
  * Check if a message looks like a yield/DeFi intent using keyword heuristics.
@@ -180,6 +185,8 @@ export async function parseUserIntentWithLLM(
         riskTolerance?: string;
         targetAmount?: number;
         tokenSymbol?: string;
+        secondaryToken?: string | null;
+        secondaryAmount?: number | null;
         preferences?: string[];
       };
 
@@ -194,8 +201,10 @@ export async function parseUserIntentWithLLM(
         ? (parsed.riskTolerance as UserIntent['riskTolerance'])
         : 'moderate';
 
+      const hasDualToken = parsed.secondaryToken && parsed.secondaryToken !== parsed.tokenSymbol;
       console.log(
-        `[Intent] LLM parsed: ${riskTolerance} risk, ${parsed.targetAmount || 100} ${parsed.tokenSymbol || 'HBAR'}`
+        `[Intent] LLM parsed: ${riskTolerance} risk, ${parsed.targetAmount || 100} ${parsed.tokenSymbol || 'HBAR'}` +
+        (hasDualToken ? ` + ${parsed.secondaryAmount || '?'} ${parsed.secondaryToken} (dual-token)` : '')
       );
 
       return {
@@ -203,6 +212,8 @@ export async function parseUserIntentWithLLM(
         riskTolerance,
         targetAmount: parsed.targetAmount || 100,
         tokenSymbol: parsed.tokenSymbol || 'HBAR',
+        secondaryToken: hasDualToken ? (parsed.secondaryToken as string) : undefined,
+        secondaryAmount: hasDualToken ? (parsed.secondaryAmount || 0) : undefined,
         preferences: parsed.preferences || [],
         sessionId,
       };

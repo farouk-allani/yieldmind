@@ -44,6 +44,14 @@ export default function PortfolioPage() {
   const [mounted, setMounted] = useState(false);
 
   // Keeper analysis state
+  interface HarvestCalldata {
+    strategyAddress: string;
+    strategyContractId: string;
+    functionSelector: string;
+    callerAddress: string;
+    fullCalldata: string;
+    vaultName: string;
+  }
   interface KeeperVaultDecision {
     vault: string;
     vaultAddress: string;
@@ -53,6 +61,7 @@ export default function PortfolioPage() {
     action: string;
     confidence: number;
     reasoning: string;
+    harvestCalldata: HarvestCalldata | null;
     volatility: {
       token: string;
       realizedVol24h: number;
@@ -81,12 +90,21 @@ export default function PortfolioPage() {
   const [keeperData, setKeeperData] = useState<KeeperResponse | null>(null);
   const [keeperLoading, setKeeperLoading] = useState(false);
   const [keeperError, setKeeperError] = useState<string | null>(null);
+  const [harvestingVault, setHarvestingVault] = useState<string | null>(null);
+  const [harvestResult, setHarvestResult] = useState<{ vault: string; txId: string } | null>(null);
 
   const fetchKeeper = useCallback(async () => {
     setKeeperLoading(true);
     setKeeperError(null);
     try {
-      const res = await fetch('/api/keeper');
+      // Use POST with wallet address to get harvest calldata
+      const res = wallet.address
+        ? await fetch('/api/keeper', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ walletAddress: wallet.address }),
+          })
+        : await fetch('/api/keeper');
       if (!res.ok) throw new Error(`Keeper API returned ${res.status}`);
       const data = await res.json() as KeeperResponse;
       setKeeperData(data);
@@ -95,7 +113,64 @@ export default function PortfolioPage() {
     } finally {
       setKeeperLoading(false);
     }
-  }, []);
+  }, [wallet.address]);
+
+  /**
+   * Execute harvest on a vault's strategy contract via user's wallet.
+   * Calls harvest(address) on the strategy, which compounds rewards.
+   */
+  const executeHarvest = useCallback(async (decision: KeeperVaultDecision) => {
+    if (!decision.harvestCalldata || !wallet.address) return;
+    const calldata = decision.harvestCalldata;
+    setHarvestingVault(decision.vault);
+    setHarvestResult(null);
+
+    try {
+      if (wallet.walletType === 'metamask') {
+        // MetaMask: direct EVM transaction to strategy contract
+        const { ethers } = await import('ethers');
+        const getEthereum = () => (window as unknown as Record<string, unknown>).ethereum;
+        const provider = new ethers.BrowserProvider(getEthereum() as never);
+        const signer = await provider.getSigner();
+        const tx = await signer.sendTransaction({
+          to: calldata.strategyAddress,
+          data: calldata.fullCalldata,
+          gasLimit: 2_000_000,
+        });
+        const receipt = await tx.wait();
+        setHarvestResult({ vault: decision.vault, txId: receipt?.hash || tx.hash });
+      } else {
+        // WalletConnect (HashPack/Kabila): Hedera SDK ContractExecuteTransaction
+        const { ContractExecuteTransaction, ContractId, Hbar } = await import('@hiero-ledger/sdk');
+        const { getHederaConnector, transactionToBase64String } = await import('@/lib/hedera-wallet-connect');
+        const { getCurrentNetwork } = await import('@/lib/network-config');
+
+        const connector = await getHederaConnector();
+        const network = getCurrentNetwork();
+        const signerAccountId = `hedera:${network}:${wallet.accountId}`;
+
+        const calldataBytes = Buffer.from(calldata.fullCalldata.replace('0x', ''), 'hex');
+        const tx = new ContractExecuteTransaction()
+          .setContractId(ContractId.fromString(calldata.strategyContractId))
+          .setFunctionParameters(new Uint8Array(calldataBytes))
+          .setGas(2_000_000)
+          .setPayableAmount(new Hbar(1)) // small gas payment
+          .setMaxTransactionFee(new Hbar(10));
+
+        const result = await connector.signAndExecuteTransaction({
+          signerAccountId,
+          transactionList: transactionToBase64String(tx as never),
+        });
+        const txId = (result as { transactionId?: string })?.transactionId || 'submitted';
+        setHarvestResult({ vault: decision.vault, txId });
+      }
+    } catch (err) {
+      console.error('[Keeper] Harvest execution failed:', err);
+      setKeeperError(`Harvest failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setHarvestingVault(null);
+    }
+  }, [wallet.address, wallet.walletType, wallet.accountId]);
 
   // Withdraw modal state
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
@@ -877,6 +952,44 @@ export default function PortfolioPage() {
                             </div>
                           )}
                         </div>
+
+                        {/* Harvest execution button for harvest-now decisions */}
+                        {d.action === 'harvest-now' && d.harvestCalldata && wallet.isConnected && (
+                          <div className="ml-[18px] mt-2.5">
+                            {harvestResult?.vault === d.vault ? (
+                              <div className="flex items-center gap-2 text-[12px] text-supply">
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Harvest executed!</span>
+                                <a
+                                  href={hashscanTxUrl(harvestResult.txId)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-accent hover:text-accent/80 underline"
+                                >
+                                  View tx
+                                </a>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => executeHarvest(d)}
+                                disabled={harvestingVault !== null}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] bg-supply/15 text-supply text-[12px] font-medium hover:bg-supply/25 transition-colors disabled:opacity-50"
+                              >
+                                {harvestingVault === d.vault ? (
+                                  <>
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    Signing...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Zap className="w-3.5 h-3.5" />
+                                    Execute Harvest on {d.vault}
+                                  </>
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

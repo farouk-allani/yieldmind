@@ -49,12 +49,13 @@ function handleGeneralQuery(message: string): string {
     ].join('\n');
   }
 
-  if (lower.includes('bonzo') || lower.includes('vault') || lower.includes('where') && lower.includes('money')) {
+  if ((lower.includes('where') && lower.includes('money')) || (lower.includes('bonzo') && lower.includes('what'))) {
     return [
       '**Where your funds go:**',
       '',
-      'Your deposits go directly into **Bonzo Finance** lending pools on Hedera.',
-      'The AI agents use live data from Bonzo (APY rates, risk metrics, reserves) to build your strategy.',
+      'Your deposits go into **Bonzo Finance** products on Hedera:',
+      '- **Bonzo Lend**: Lending pools with stable supply APY',
+      '- **Bonzo Vaults**: Auto-compounding concentrated liquidity vaults on SaucerSwap V2 with higher APY',
       '',
       'Every deposit is a real on-chain transaction — verifiable on HashScan.',
       'Strategy tracking and agent decisions are logged transparently to HCS.',

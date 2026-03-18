@@ -99,12 +99,12 @@ export async function saveMessage(
   if (role === 'user') {
     const updates: Record<string, string> = { updated_at: new Date().toISOString() };
     // Set title from first user message (truncated)
-    const { data: msgCount } = await supabase
+    const { count } = await supabase
       .from('chat_messages')
       .select('id', { count: 'exact', head: true })
       .eq('session_id', sessionId)
       .eq('role', 'user');
-    if (msgCount && (msgCount as unknown[]).length <= 1) {
+    if (count !== null && count <= 1) {
       updates.title = content.length > 60 ? content.slice(0, 57) + '...' : content;
     }
     await supabase

@@ -269,18 +269,17 @@ async function depositBonzoVaultViaHederaSDK(
   symbol: string,
   setStatus: (s: TxStatus) => void,
 ): Promise<TxResult> {
-  const { getHederaConnector } = await import('./hedera-wallet-connect');
-  const {
-    ContractExecuteTransaction,
-    Hbar,
-    ContractId,
-    AccountId,
-  } = await import('@hashgraph/sdk') as any;
+  // Use same SDK + signing pattern as the Bonzo Lend deposit
+  const { ContractExecuteTransaction, ContractId, Hbar } =
+    await import('@hiero-ledger/sdk');
+  const { getHederaConnector, transactionToBase64String } =
+    await import('./hedera-wallet-connect');
+  const { getCurrentNetwork, getNetworkConfig } = await import('./network-config');
 
   const connector = await getHederaConnector();
-  if (!connector) throw new Error('WalletConnect not initialized');
+  const network = getCurrentNetwork();
   const mirrorNodeUrl = getNetworkConfig().mirrorNodeUrl;
-  const network = getNetworkConfig().network;
+  const signerAccountId = `hedera:${network}:${accountId}`;
 
   // Resolve the vault's Hedera contract ID
   let vaultHederaId: string;
@@ -291,17 +290,20 @@ async function depositBonzoVaultViaHederaSDK(
     return { status: 'failed', txHash: null, error: `Cannot resolve Hedera ID for vault ${vaultEvmAddress}` };
   }
 
-  const isHbar = symbol === 'HBAR' || symbol === 'WHBAR';
-  const rawAmount = BigInt(Math.round(amount * Math.pow(10, decimals)));
+  const isHbar = symbol === 'HBAR' || symbol === 'WHBAR' ||
+    symbol.includes('HBAR') || symbol.includes('WHBAR');
+  // For HBAR, always use 8 decimals (tinybars) regardless of vault's depositDecimals
+  const effectiveDecimals = isHbar ? 8 : decimals;
+  const rawAmount = BigInt(Math.round(amount * Math.pow(10, effectiveDecimals)));
 
   if (isHbar) {
-    // ── HBAR → Bonzo Vault: Try sending native HBAR with deposit(amount) ──
+    // ── HBAR → Bonzo Vault: send native HBAR with deposit(uint256) ──
     // deposit(uint256) selector: 0xb6b55f25
-    // The vault should wrap HBAR→WHBAR internally if it's a WHBAR vault
+    // The vault wraps HBAR→WHBAR internally
     const amountHex = rawAmount.toString(16).padStart(64, '0');
     const callData = Buffer.from('b6b55f25' + amountHex, 'hex');
 
-    console.log(`[Vault/SDK] Depositing ${amount} HBAR into vault ${vaultHederaId} (${vaultEvmAddress})`);
+    console.log(`[Vault/SDK] Depositing ${amount} HBAR into Bonzo Vault ${vaultHederaId} (${vaultEvmAddress})`);
     setStatus('signing');
 
     try {
@@ -309,41 +311,26 @@ async function depositBonzoVaultViaHederaSDK(
         .setContractId(ContractId.fromString(vaultHederaId))
         .setFunctionParameters(new Uint8Array(callData))
         .setGas(3_000_000)
-        .setPayableAmount(new Hbar(amount)) // Send native HBAR
+        .setPayableAmount(new Hbar(amount))
         .setMaxTransactionFee(new Hbar(15));
 
-      const signer = connector.signers?.find(
-        (s: any) => s.getAccountId?.().toString() === accountId
-      ) || connector.signers?.[0];
-      if (!signer) throw new Error('No WalletConnect signer');
-
       setStatus('confirming');
-      const result = await (tx as any).executeWithSigner(signer);
-      const txId = result?.transactionId?.toString?.() || '';
-      console.log(`[Vault/SDK] Vault deposit tx: ${txId}`);
+      const result = await connector.signAndExecuteTransaction({
+        signerAccountId,
+        transactionList: transactionToBase64String(tx as any),
+      });
 
-      // Verify via Mirror Node
+      const txId = (result as { transactionId?: string })?.transactionId || null;
+      console.log(`[Vault/SDK] Vault deposit result:`, result);
+
       if (txId) {
-        await new Promise((r) => setTimeout(r, 4000));
-        const formattedTxId = txId.replace('@', '-').replace('.', '-');
-        const verifyRes = await fetch(`${mirrorNodeUrl}/api/v1/transactions/${formattedTxId}`);
-        if (verifyRes.ok) {
-          const verifyData = await verifyRes.json() as { transactions?: Array<{ result?: string }> };
-          const txResult = verifyData.transactions?.[0]?.result;
-          if (txResult === 'SUCCESS') {
-            setStatus('confirmed');
-            return { status: 'confirmed', txHash: txId, error: null };
-          } else if (txResult) {
-            console.warn(`[Vault/SDK] Vault deposit result: ${txResult}`);
-            setStatus('failed');
-            return { status: 'failed', txHash: txId, error: `Vault deposit failed: ${txResult}` };
-          }
-        }
+        setStatus('confirmed');
+        return { status: 'confirmed', txHash: txId, error: null };
       }
 
-      // Optimistic return if Mirror Node not available yet
+      // No txId but no error — optimistic
       setStatus('confirmed');
-      return { status: 'confirmed', txHash: txId, error: null };
+      return { status: 'confirmed', txHash: null, error: null };
     } catch (err: unknown) {
       const errMsg = (err as any)?.message || String(err);
       console.warn(`[Vault/SDK] HBAR vault deposit failed: ${errMsg}`);
@@ -351,18 +338,149 @@ async function depositBonzoVaultViaHederaSDK(
       return { status: 'failed', txHash: null, error: `Vault deposit failed: ${errMsg}` };
     }
   } else {
-    // ── ERC-20 → Bonzo Vault: approve + deposit(amount) ──
-    const tokenAddress = vaultEvmAddress; // For ERC-20, assetAddress is the token, vaultEvmAddress is the vault
-    // Note: we need the actual token address, not the vault address
-    // The caller should pass the token address as a separate param
-    // For now, we'll encode approve(vault, amount) then deposit(amount)
-
+    // ERC-20 vault deposits not yet supported
     console.log(`[Vault/SDK] ERC-20 vault deposit: ${amount} ${symbol} into ${vaultHederaId}`);
     setStatus('failed');
     return {
       status: 'failed',
       txHash: null,
       error: `ERC-20 vault deposits not yet supported via WalletConnect. Use MetaMask or deposit at app.bonzo.finance/vaults.`,
+    };
+  }
+}
+
+/**
+ * Dual-token deposit into Bonzo Vault via WalletConnect (HashPack/Kabila).
+ *
+ * Flow:
+ * 1. Approve token0 (e.g., USDC) to the vault contract
+ * 2. Call deposit(uint256 amount0, uint256 amount1, uint256 minShares) with HBAR as msg.value
+ *
+ * Selector: 0x00aeef8a = deposit(uint256,uint256,uint256)
+ */
+async function depositDualTokenVaultViaHederaSDK(
+  accountId: string,
+  dualDeposit: {
+    token0Symbol: string;
+    token0Address: string;
+    token0Decimals: number;
+    token0Amount: number;
+    token1Symbol: string;
+    token1Address: string;
+    token1Decimals: number;
+    token1Amount: number;
+    depositSelector: string;
+    vaultContractId: string;
+  },
+  vaultEvmAddress: string,
+  setStatus: (s: TxStatus) => void,
+): Promise<TxResult> {
+  const { ContractExecuteTransaction, ContractId, Hbar, AccountAllowanceApproveTransaction, TokenId } =
+    await import('@hiero-ledger/sdk');
+  const { getHederaConnector, transactionToBase64String } =
+    await import('./hedera-wallet-connect');
+  const { getCurrentNetwork } = await import('./network-config');
+
+  const connector = await getHederaConnector();
+  const network = getCurrentNetwork();
+  const signerAccountId = `hedera:${network}:${accountId}`;
+
+  // Determine which token is HBAR (sent as msg.value) and which is ERC-20 (needs approval)
+  const isToken0Hbar = dualDeposit.token0Symbol === 'HBAR' || dualDeposit.token0Symbol === 'WHBAR';
+  const isToken1Hbar = dualDeposit.token1Symbol === 'HBAR' || dualDeposit.token1Symbol === 'WHBAR';
+
+  const hbarAmount = isToken0Hbar ? dualDeposit.token0Amount : isToken1Hbar ? dualDeposit.token1Amount : 0;
+  const erc20Symbol = isToken0Hbar ? dualDeposit.token1Symbol : dualDeposit.token0Symbol;
+  const erc20Amount = isToken0Hbar ? dualDeposit.token1Amount : dualDeposit.token0Amount;
+  const erc20Decimals = isToken0Hbar ? dualDeposit.token1Decimals : dualDeposit.token0Decimals;
+  const erc20Address = isToken0Hbar ? dualDeposit.token1Address : dualDeposit.token0Address;
+
+  const rawErc20 = BigInt(Math.round(erc20Amount * Math.pow(10, erc20Decimals)));
+  const rawHbar = BigInt(Math.round(hbarAmount * Math.pow(10, 8)));
+
+  console.log(`[Vault/SDK] Dual-token deposit: ${dualDeposit.token0Amount} ${dualDeposit.token0Symbol} + ${dualDeposit.token1Amount} ${dualDeposit.token1Symbol}`);
+  console.log(`[Vault/SDK] HBAR side: ${hbarAmount} HBAR (${rawHbar} tinybar) | ERC-20 side: ${erc20Amount} ${erc20Symbol} (${rawErc20})`);
+
+  // Step 1: Approve ERC-20 token (e.g., USDC) to vault contract
+  if (erc20Amount > 0) {
+    try {
+      setStatus('approving');
+      console.log(`[Vault/SDK] Approving ${erc20Amount} ${erc20Symbol} (${erc20Address}) to vault ${dualDeposit.vaultContractId}`);
+
+      // Resolve ERC-20 token Hedera ID from its EVM address
+      // USDC = 0x000000000000000000000000000000000006f89a → extract last 8 hex chars
+      const tokenIdNum = parseInt(erc20Address.slice(-8), 16);
+      const tokenId = `0.0.${tokenIdNum}`;
+
+      const approveTx = new AccountAllowanceApproveTransaction()
+        .approveTokenAllowance(
+          TokenId.fromString(tokenId),
+          accountId,
+          ContractId.fromString(dualDeposit.vaultContractId).toString(),
+          rawErc20 as never,
+        )
+        .setMaxTransactionFee(new Hbar(5));
+
+      const approveResult = await connector.signAndExecuteTransaction({
+        signerAccountId,
+        transactionList: transactionToBase64String(approveTx as never),
+      });
+      console.log(`[Vault/SDK] Approval result:`, approveResult);
+    } catch (err) {
+      console.error('[Vault/SDK] ERC-20 approval failed:', err);
+      setStatus('failed');
+      return {
+        status: 'failed',
+        txHash: null,
+        error: `Failed to approve ${erc20Symbol}: ${err instanceof Error ? err.message : 'Unknown error'}`,
+      };
+    }
+  }
+
+  // Step 2: Call deposit(uint256 amount0, uint256 amount1, uint256 minShares)
+  // Selector: 0x00aeef8a
+  // amount0 = first token (USDC), amount1 = second token (HBAR), minShares = 0
+  setStatus('signing');
+  try {
+    const amount0Raw = isToken0Hbar ? rawHbar : rawErc20;
+    const amount1Raw = isToken0Hbar ? rawErc20 : rawHbar;
+
+    const p0 = amount0Raw.toString(16).padStart(64, '0');
+    const p1 = amount1Raw.toString(16).padStart(64, '0');
+    const p2 = '0'.padStart(64, '0'); // minShares = 0
+    const callData = Buffer.from('00aeef8a' + p0 + p1 + p2, 'hex');
+
+    console.log(`[Vault/SDK] deposit(${amount0Raw}, ${amount1Raw}, 0) → vault ${dualDeposit.vaultContractId}`);
+
+    const depositTx = new ContractExecuteTransaction()
+      .setContractId(ContractId.fromString(dualDeposit.vaultContractId))
+      .setFunctionParameters(new Uint8Array(callData))
+      .setGas(3_000_000)
+      .setPayableAmount(new Hbar(hbarAmount))
+      .setMaxTransactionFee(new Hbar(15));
+
+    setStatus('confirming');
+    const result = await connector.signAndExecuteTransaction({
+      signerAccountId,
+      transactionList: transactionToBase64String(depositTx as never),
+    });
+
+    const txId = (result as { transactionId?: string })?.transactionId || null;
+    console.log(`[Vault/SDK] Dual deposit result:`, result);
+
+    setStatus('confirmed');
+    return {
+      status: 'confirmed',
+      txHash: txId,
+      error: null,
+    };
+  } catch (err) {
+    console.error('[Vault/SDK] Dual deposit failed:', err);
+    setStatus('failed');
+    return {
+      status: 'failed',
+      txHash: null,
+      error: `Vault deposit failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
     };
   }
 }
@@ -1130,6 +1248,97 @@ export function useVault() {
     }
   }, [provider]);
 
+  /**
+   * Deposit into a dual-asset Bonzo Vault (e.g., USDC-HBAR).
+   * Handles ERC-20 approval + deposit(amount0, amount1, minShares).
+   */
+  const depositDualToken = useCallback(
+    async (
+      dualDeposit: {
+        token0Symbol: string;
+        token0Address: string;
+        token0Decimals: number;
+        token0Amount: number;
+        token1Symbol: string;
+        token1Address: string;
+        token1Decimals: number;
+        token1Amount: number;
+        depositSelector: string;
+        vaultContractId: string;
+      },
+      vaultEvmAddress: string,
+    ): Promise<TxResult> => {
+      if (isWalletConnect && accountId) {
+        return depositDualTokenVaultViaHederaSDK(
+          accountId,
+          dualDeposit,
+          vaultEvmAddress,
+          setDepositStatus,
+        );
+      }
+
+      // MetaMask path
+      if (!provider || !address) {
+        return { status: 'failed', txHash: null, error: 'Wallet not connected' };
+      }
+
+      try {
+        const { ethers } = await import('ethers');
+        const getEthereum = () => (window as unknown as Record<string, unknown>).ethereum;
+        const browserProvider = new ethers.BrowserProvider(getEthereum() as never);
+        const signer = await browserProvider.getSigner();
+
+        const isToken0Hbar = dualDeposit.token0Symbol === 'HBAR' || dualDeposit.token0Symbol === 'WHBAR';
+        const isToken1Hbar = dualDeposit.token1Symbol === 'HBAR' || dualDeposit.token1Symbol === 'WHBAR';
+        const hbarAmount = isToken0Hbar ? dualDeposit.token0Amount : isToken1Hbar ? dualDeposit.token1Amount : 0;
+        const erc20Amount = isToken0Hbar ? dualDeposit.token1Amount : dualDeposit.token0Amount;
+        const erc20Decimals = isToken0Hbar ? dualDeposit.token1Decimals : dualDeposit.token0Decimals;
+        const erc20Address = isToken0Hbar ? dualDeposit.token1Address : dualDeposit.token0Address;
+
+        const rawErc20 = BigInt(Math.round(erc20Amount * Math.pow(10, erc20Decimals)));
+        const rawHbar = BigInt(Math.round(hbarAmount * Math.pow(10, 8)));
+
+        // Step 1: Approve ERC-20
+        if (erc20Amount > 0) {
+          setDepositStatus('approving');
+          const erc20Contract = new ethers.Contract(erc20Address, ERC20_ABI, signer);
+          const approveTx = await erc20Contract.approve(vaultEvmAddress, rawErc20, { gasLimit: 200_000 });
+          await approveTx.wait();
+        }
+
+        // Step 2: deposit(amount0, amount1, minShares)
+        setDepositStatus('signing');
+        const DUAL_DEPOSIT_ABI = ['function deposit(uint256 _amount0, uint256 _amount1, uint256 _minShares) external'];
+        const vaultContract = new ethers.Contract(vaultEvmAddress, DUAL_DEPOSIT_ABI, signer);
+
+        const amount0Raw = isToken0Hbar ? rawHbar : rawErc20;
+        const amount1Raw = isToken0Hbar ? rawErc20 : rawHbar;
+
+        setDepositStatus('confirming');
+        const tx = await vaultContract.deposit(amount0Raw, amount1Raw, 0, {
+          value: rawHbar,
+          gasLimit: 3_000_000,
+        });
+        const receipt = await tx.wait();
+
+        if (receipt?.status === 1) {
+          setDepositStatus('confirmed');
+          return { status: 'confirmed', txHash: tx.hash, error: null };
+        }
+        setDepositStatus('failed');
+        return { status: 'failed', txHash: tx.hash, error: 'Transaction reverted' };
+      } catch (err: unknown) {
+        setDepositStatus('failed');
+        const error = err as { code?: string; message?: string };
+        if (error.code === 'ACTION_REJECTED') {
+          return { status: 'failed', txHash: null, error: 'Transaction rejected by user' };
+        }
+        return { status: 'failed', txHash: null, error: error.message || 'Dual deposit failed' };
+      }
+    },
+    [provider, address, accountId, isWalletConnect]
+  );
+
   const resetStatus = useCallback(() => {
     setDepositStatus('idle');
     setWithdrawStatus('idle');
@@ -1137,6 +1346,7 @@ export function useVault() {
 
   return {
     deposit,
+    depositDualToken,
     withdraw,
     emergencyWithdraw,
     getDeposit,

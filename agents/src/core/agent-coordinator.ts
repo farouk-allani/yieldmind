@@ -290,17 +290,38 @@ export class AgentCoordinator {
       return `I analyzed the available vaults but couldn't find a suitable strategy for your intent. ${decision.reasoning}`;
     }
 
-    const vaultSummaries = strategy.vaults
+    const executable = strategy.vaults.filter(
+      (v: { allocation: number }) => v.allocation > 0
+    );
+    const recommendations = strategy.vaults.filter(
+      (v: { allocation: number }) => v.allocation === 0
+    );
+
+    const execSummaries = executable
       .map(
         (v: { vaultName: string; allocation: number; expectedApy: number; riskLevel: string }) =>
           `• ${v.vaultName}: ${v.allocation}% allocation, ~${v.expectedApy.toFixed(1)}% APY (${v.riskLevel} risk)`
       )
       .join('\n');
 
-    return [
+    const recSummaries = recommendations
+      .map(
+        (v: { vaultName: string; expectedApy: number; riskLevel: string }) =>
+          `• ${v.vaultName}: ${v.expectedApy.toFixed(1)}% APY (${v.riskLevel} risk) — deposit at app.bonzo.finance/vaults`
+      )
+      .join('\n');
+
+    const lines = [
       `Here's my recommended strategy (confidence: ${(decision.confidence * 100).toFixed(0)}%):`,
       '',
-      vaultSummaries,
+      execSummaries,
+    ];
+
+    if (recSummaries) {
+      lines.push('', '**Higher APY vault opportunities** (require both tokens):', recSummaries);
+    }
+
+    lines.push(
       '',
       `Overall expected APY: ~${strategy.totalExpectedApy.toFixed(1)}%`,
       `Risk level: ${strategy.overallRisk}`,
@@ -308,7 +329,9 @@ export class AgentCoordinator {
       `**Agent reasoning:** ${decision.reasoning}`,
       '',
       'Shall I execute this strategy? All decisions will be logged on-chain via Hedera Consensus Service.',
-    ].join('\n');
+    );
+
+    return lines.join('\n');
   }
 
   private formatExecutionMessage(decision: DecisionLog): string {

@@ -114,6 +114,21 @@ export function useChatHistory(): UseChatHistoryReturn {
     if (!isAvailable) return;
     try {
       await saveMessage(sessionId, role, content, metadata);
+
+      // Update local session title after first user message
+      if (role === 'user') {
+        setSessions((prev) =>
+          prev.map((s) => {
+            if (s.id !== sessionId) return s;
+            // Only update if still "New conversation"
+            if (s.title === 'New conversation') {
+              const newTitle = content.length > 60 ? content.slice(0, 57) + '...' : content;
+              return { ...s, title: newTitle, updated_at: new Date().toISOString() };
+            }
+            return { ...s, updated_at: new Date().toISOString() };
+          })
+        );
+      }
     } catch (err) {
       console.warn('[ChatHistory] Failed to save message:', err);
     }

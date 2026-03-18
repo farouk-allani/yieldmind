@@ -187,16 +187,50 @@ export function ChatInterface({
     // Step 2: Bonzo Vault deposit(s)
     for (let i = 0; i < vaultAmounts.length; i++) {
       const { vault: vaultAlloc, amount: vaultAmt } = vaultAmounts[i];
+      const dualData = (vaultAlloc as { dualTokenDeposit?: { token0Symbol: string; token0Address: string; token0Decimals: number; token0Amount: number; token1Symbol: string; token1Address: string; token1Decimals: number; token1Amount: number; depositSelector: string; vaultContractId: string } }).dualTokenDeposit;
+
+      const stepNum = (lendAmount > 0 ? 2 : 1) + i;
+
+      if (dualData) {
+        // ── Dual-token vault deposit (e.g., USDC + HBAR → USDC-HBAR vault) ──
+        addMessage({
+          id: `system-vault-${i}-${Date.now()}`,
+          role: 'system',
+          content: `Step ${stepNum}: Depositing ${dualData.token0Amount} ${dualData.token0Symbol} + ${dualData.token1Amount} ${dualData.token1Symbol} into ${vaultAlloc.vaultName}...\n\nThis requires: 1) ${dualData.token0Symbol === 'HBAR' ? dualData.token1Symbol : dualData.token0Symbol} approval + 2) vault deposit.`,
+          timestamp: new Date().toISOString(),
+        });
+
+        const dualResult = await vault.depositDualToken(dualData, vaultAlloc.assetEvmAddress);
+
+        if (dualResult.status === 'confirmed' && dualResult.txHash) {
+          depositResults.push({ target: vaultAlloc.vaultName, amount: vaultAmt, txHash: dualResult.txHash });
+          addMessage({
+            id: `system-vault-ok-${i}-${Date.now()}`,
+            role: 'system',
+            content: `Vault deposit confirmed: ${dualData.token0Amount} ${dualData.token0Symbol} + ${dualData.token1Amount} ${dualData.token1Symbol} → ${vaultAlloc.vaultName}`,
+            timestamp: new Date().toISOString(),
+          });
+        } else {
+          depositResults.push({ target: vaultAlloc.vaultName, amount: vaultAmt, error: dualResult.error || 'Failed' });
+          addMessage({
+            id: `system-vault-fail-${i}-${Date.now()}`,
+            role: 'system',
+            content: `Vault deposit failed: ${dualResult.error || 'Unknown error'}`,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        vault.resetStatus();
+        continue;
+      }
 
       addMessage({
         id: `system-vault-${i}-${Date.now()}`,
         role: 'system',
-        content: `Step ${(lendAmount > 0 ? 2 : 1) + i}: Depositing ${vaultAmt} ${tokenSymbol} into ${vaultAlloc.vaultName}...`,
+        content: `Step ${stepNum}: Depositing ${vaultAmt} ${tokenSymbol} into ${vaultAlloc.vaultName}...`,
         timestamp: new Date().toISOString(),
       });
 
       // Bonzo Vault deposit: approve token + vault.deposit(amount)
-      // The deposit function in use-vault handles this via depositBonzoVault
       const vaultResult = await vault.deposit(
         strategy.id,
         vaultAlloc.vaultName,
@@ -572,14 +606,35 @@ function StrategyApprovalCard({
           <div className="text-[11px] text-text-muted uppercase tracking-wide mb-1">
             Deposit
           </div>
-          <div className="flex items-center gap-2 text-xl font-bold text-text-primary">
-            <img
-              src={tokenSymbol === 'HBAR' ? '/hbar.webp' : `/${tokenSymbol.toLowerCase()}.png`}
-              alt={tokenSymbol}
-              className="w-6 h-6 rounded-full"
-            />
-            {amount} {tokenSymbol}
-          </div>
+          {strategy.userIntent?.secondaryToken ? (
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2 text-lg font-bold text-text-primary">
+                <img
+                  src={tokenSymbol === 'HBAR' ? '/hbar.webp' : `/${tokenSymbol.toLowerCase()}.png`}
+                  alt={tokenSymbol}
+                  className="w-5 h-5 rounded-full"
+                />
+                {amount} {tokenSymbol}
+              </div>
+              <div className="flex items-center gap-2 text-lg font-bold text-text-primary">
+                <img
+                  src={strategy.userIntent.secondaryToken === 'HBAR' ? '/hbar.webp' : `/${strategy.userIntent.secondaryToken.toLowerCase()}.png`}
+                  alt={strategy.userIntent.secondaryToken}
+                  className="w-5 h-5 rounded-full"
+                />
+                {strategy.userIntent.secondaryAmount || '~'} {strategy.userIntent.secondaryToken}
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-xl font-bold text-text-primary">
+              <img
+                src={tokenSymbol === 'HBAR' ? '/hbar.webp' : `/${tokenSymbol.toLowerCase()}.png`}
+                alt={tokenSymbol}
+                className="w-6 h-6 rounded-full"
+              />
+              {amount} {tokenSymbol}
+            </div>
+          )}
         </div>
         <div className="text-right">
           <div className="text-[11px] text-text-muted uppercase tracking-wide mb-1">
@@ -602,7 +657,7 @@ function StrategyApprovalCard({
               <img src="/bonzo.webp" alt="Bonzo" className="w-5 h-5 rounded-full flex-shrink-0" />
               <div>
                 <div className="text-[13px] font-medium text-text-primary leading-tight">{v.vaultName}</div>
-                <div className="text-[11px] text-text-muted">{v.symbol} · Bonzo Lend</div>
+                <div className="text-[11px] text-text-muted">{v.symbol} · {v.productType === 'bonzo-vault' ? 'Bonzo Vault' : 'Bonzo Lend'}</div>
               </div>
             </div>
             <div className="text-right flex-shrink-0">
@@ -616,7 +671,7 @@ function StrategyApprovalCard({
         {strategy.vaults.filter((v) => v.allocation === 0).length > 0 && (
           <>
             <div className="text-[10px] text-text-muted uppercase tracking-wide pt-2 pb-1">
-              Additional Yield Opportunities (manual deposit)
+              Higher APY Opportunities (requires both tokens)
             </div>
             {strategy.vaults.filter((v) => v.allocation === 0).map((v, i) => (
               <div
