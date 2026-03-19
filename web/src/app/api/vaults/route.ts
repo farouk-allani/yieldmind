@@ -18,10 +18,15 @@ export async function GET() {
       tokenSymbol: 'HBAR',
     });
 
-    const vaults = scoutDecision.data.topVaults || [];
+    // Support both old (topVaults) and new (topLendReserves + topBonzoVaults) data formats
+    const lendReserves = scoutDecision.data.topLendReserves || scoutDecision.data.topVaults || [];
+    const bonzoVaults = scoutDecision.data.topBonzoVaults || [];
 
     return NextResponse.json({
-      vaults,
+      lendReserves,
+      bonzoVaults,
+      // legacy compat
+      vaults: lendReserves,
       lastUpdated: new Date().toISOString(),
     });
   } catch (error) {

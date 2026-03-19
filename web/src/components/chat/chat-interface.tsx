@@ -42,7 +42,14 @@ export function ChatInterface({
     id: 'welcome',
     role: 'system',
     content:
-      'Welcome to YieldMind. Connect your wallet, then tell me your yield intent and I\'ll coordinate the agent network to find the optimal strategy on Bonzo Vaults.\n\nTry: "I want safe yield on 100 HBAR"',
+      '👋 Welcome to **YieldMind** — your autonomous DeFi yield manager on Hedera.\n\n' +
+      'I coordinate 4 specialized AI agents to find and execute the best Bonzo Finance yield strategies for you. ' +
+      'Every decision is logged transparently on Hedera Consensus Service.\n\n' +
+      '**Connect your wallet**, then describe what you want — for example:\n' +
+      '- "I want safe yield on 100 HBAR"\n' +
+      '- "Aggressive strategy for 500 HBAR"\n' +
+      '- "Conservative yield on 50 USDC"\n\n' +
+      'Or use the **Quick start** chips below. 👇',
     timestamp: new Date().toISOString(),
   };
 
@@ -503,6 +510,33 @@ export function ChatInterface({
 
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Quick action chips — shown only when no messages have been sent */}
+      {messages.length <= 1 && !isLoading && (
+        <div className="flex-shrink-0 px-5 pb-2">
+          <p className="text-[10px] text-text-muted mb-2 uppercase tracking-wider font-medium">Quick start</p>
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              { label: 'Safe yield on 100 HBAR', emoji: '🛡️' },
+              { label: 'Aggressive strategy for 500 HBAR', emoji: '⚡' },
+              { label: 'Conservative yield on 50 USDC', emoji: '💵' },
+              { label: 'Best APY for HBAR right now', emoji: '📈' },
+            ].map((chip) => (
+              <button
+                key={chip.label}
+                onClick={() => {
+                  setInput(chip.label);
+                  inputRef.current?.focus();
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface border border-border-subtle text-[11px] text-text-secondary hover:text-text-primary hover:border-accent/40 transition-colors"
+              >
+                <span>{chip.emoji}</span>
+                {chip.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Input */}
       <div className="flex-shrink-0 border-t border-border-subtle px-5 py-4">

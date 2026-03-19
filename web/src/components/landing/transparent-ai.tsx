@@ -11,7 +11,7 @@ const logEntries = [
     time: '2:34 PM',
     action: 'vault-scan-complete',
     reasoning:
-      'Scanned 5 Bonzo Vaults. Best match for conservative risk: HBAR-USDC Stable Yield at 8.5% APY. Score: 0.87/1.0',
+      'Scanned 14 Bonzo products (lend + vaults). Best conservative match: HBAR Supply Pool at 5.8% APY. TVL: $2.4M. Score: 0.87/1.0.',
     confidence: 0.87,
   },
   {
@@ -21,7 +21,7 @@ const logEntries = [
     time: '2:34 PM',
     action: 'strategy-proposed',
     reasoning:
-      'Proposed 2-vault strategy: HBAR-USDC (70%), USDC-USDT (30%). Blended APY: 6.2%. Risk: conservative.',
+      'Proposed 2-product strategy: HBAR Supply Pool (70%), USDC-HBAR Vault (30%). Blended APY: 8.4%. Risk: conservative.',
     confidence: 0.92,
   },
   {
@@ -30,9 +30,19 @@ const logEntries = [
     color: '#F59E0B',
     time: '2:35 PM',
     action: 'deposit-confirmed',
-    reasoning: 'Deposited into 2 vaults. Tx: 0.0.1234@1709142938',
+    reasoning: 'User deposit verified on Mirror Node. 100 HBAR into Bonzo LendingPool. Tx: 0.0.1234@1709142938.',
     confidence: 1.0,
     link: true,
+  },
+  {
+    agent: 'Sentinel',
+    icon: '/sentinel.png',
+    color: '#EF4444',
+    time: '2:36 PM',
+    action: 'monitoring-active',
+    reasoning:
+      'Monitoring HBAR price. 24h realized volatility: 42% (low). Harvest delay recommended — rewards too small to justify gas. Next check: 5 min.',
+    confidence: 0.84,
   },
 ];
 

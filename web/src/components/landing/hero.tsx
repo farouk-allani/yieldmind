@@ -86,7 +86,7 @@ export function Hero() {
         </p>
 
         {/* Feature pills */}
-        {/* <div className="flex flex-wrap items-center justify-center gap-3 mt-1">
+        <div className="flex flex-wrap items-center justify-center gap-3 mt-1">
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface border border-border-subtle text-[12px] text-text-secondary">
             <Shield className="w-3 h-3 text-supply" />
             On-Chain Transparency
@@ -99,7 +99,7 @@ export function Hero() {
             <Eye className="w-3 h-3 text-accent" />
             24/7 Monitoring
           </div>
-        </div> */}
+        </div>
 
         {/* Buttons */}
         <div className="flex flex-col sm:flex-row items-center gap-3 mt-3">
@@ -111,7 +111,7 @@ export function Hero() {
             <ArrowRight className="w-4 h-4" />
           </Link>
           <a
-            href="https://github.com"
+            href="https://github.com/farouk-allani/yieldmind"
             target="_blank"
             rel="noopener noreferrer"
             className="h-12 px-7 rounded-[8px] border border-border-subtle text-sm font-medium text-text-primary flex items-center hover:bg-card transition-colors"
@@ -134,6 +134,23 @@ export function Hero() {
             <span className="w-1 h-1 rounded-full bg-borrow" />
             Every decision on-chain
           </span>
+        </div>
+
+        {/* Stats row */}
+        <div className="mt-6 flex items-center justify-center gap-6 sm:gap-10 flex-wrap">
+          {[
+            { value: '4', label: 'AI Agents' },
+            { value: '100%', label: 'On-Chain Logs', color: 'text-supply' },
+            { value: '<3s', label: 'Finality' },
+            { value: '$0.001', label: 'Per Transaction' },
+          ].map((stat) => (
+            <div key={stat.label} className="text-center">
+              <div className={`text-xl sm:text-2xl font-bold ${stat.color || 'text-text-primary'}`}>
+                {stat.value}
+              </div>
+              <div className="text-[11px] text-text-muted">{stat.label}</div>
+            </div>
+          ))}
         </div>
       </motion.div>
     </section>

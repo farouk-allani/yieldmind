@@ -40,6 +40,12 @@ export function Navbar() {
 
         <div className="flex items-center gap-5">
           <Link
+            href="#live-yields"
+            className="text-sm text-text-secondary hover:text-text-primary transition-colors hidden md:block"
+          >
+            Live Yields
+          </Link>
+          <Link
             href="#how-it-works"
             className="text-sm text-text-secondary hover:text-text-primary transition-colors hidden md:block"
           >
@@ -52,7 +58,7 @@ export function Navbar() {
             Agents
           </Link>
           <a
-            href="https://github.com"
+            href="https://github.com/farouk-allani/yieldmind"
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-text-secondary hover:text-text-primary transition-colors hidden sm:block"

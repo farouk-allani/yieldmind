@@ -70,18 +70,40 @@ function handleGeneralQuery(message: string): string {
       '',
       '**What I can do:**',
       '- Build custom yield strategies based on your risk tolerance',
-      '- Analyze Bonzo Finance lending reserves in real-time',
+      '- Scan Bonzo Finance lending pools AND auto-compounding vaults in real-time',
       '- Execute deposits via your MetaMask wallet',
-      '- Monitor your positions with the Sentinel agent',
+      '- Monitor your positions with the Sentinel agent (24/7 price alerts)',
+      '- Run intelligent keeper analysis to optimize harvest timing',
       '',
       '**Try saying:**',
       '- "I want safe yield on 100 HBAR"',
       '- "Aggressive strategy for 500 HBAR"',
       '- "Conservative yield on USDC"',
+      '- "Best APY for HBAR right now"',
       '',
       '**Other commands:**',
       '- Ask about withdrawals, monitoring, or where your funds are',
-      '- Visit the Portfolio page for position details',
+      '- Visit the Portfolio page for position details and keeper analysis',
+    ].join('\n');
+  }
+
+  if (
+    (lower.includes('best') && (lower.includes('apy') || lower.includes('yield') || lower.includes('rate'))) ||
+    (lower.includes('current') && lower.includes('apy'))
+  ) {
+    return [
+      'YieldMind scans live APY data from both **Bonzo Lend** and **Bonzo Vaults** on Hedera.',
+      '',
+      '**Product types available:**',
+      '- **Bonzo Lend** — Lending pools with stable, low-risk supply APY (2–12% typical)',
+      '- **Bonzo Vaults** — Auto-compounding concentrated liquidity vaults (higher APY, more volatile)',
+      '',
+      'To see live rates, just tell me your intent and I\'ll run a full scan:',
+      '- "Best APY on 100 HBAR" → Scout scans all available pools',
+      '- "Safe yield on USDC" → Filter for low-risk stablecoin pools',
+      '- "Max yield, any risk" → Scan all products sorted by APY',
+      '',
+      '**Live yields are also shown on the** [landing page](/) in the "Live Yields" section.',
     ].join('\n');
   }
 

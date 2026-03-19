@@ -1,5 +1,7 @@
 import { Navbar } from '@/components/landing/navbar';
 import { Hero } from '@/components/landing/hero';
+import { LiveYields } from '@/components/landing/live-yields';
+import { WhyYieldMind } from '@/components/landing/why-yieldmind';
 import { HowItWorks } from '@/components/landing/how-it-works';
 import { AgentNetwork } from '@/components/landing/agent-network';
 import { TransparentAI } from '@/components/landing/transparent-ai';
@@ -11,6 +13,8 @@ export default function LandingPage() {
     <div className="bg-page min-h-screen">
       <Navbar />
       <Hero />
+      <LiveYields />
+      <WhyYieldMind />
       <HowItWorks />
       <AgentNetwork />
       <TransparentAI />

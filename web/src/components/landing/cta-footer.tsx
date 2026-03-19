@@ -31,7 +31,7 @@ export function CTA() {
         <p className="text-[13px] text-text-muted mt-2">
           Open source · MIT License ·{' '}
           <a
-            href="https://github.com"
+            href="https://github.com/farouk-allani/yieldmind"
             target="_blank"
             rel="noopener noreferrer"
             className="text-text-secondary hover:text-text-primary transition-colors"
@@ -63,7 +63,7 @@ export function Footer() {
         </div>
         <div className="flex items-center gap-6">
           {[
-            { label: 'GitHub', href: 'https://github.com' },
+          { label: 'GitHub', href: 'https://github.com/farouk-allani/yieldmind' },
             { label: 'Docs', href: '#' },
             { label: 'Hedera', href: 'https://hedera.com', image: '/hbar.webp' },
             { label: 'Bonzo', href: 'https://bonzo.finance', image: '/bonzo.webp' },
