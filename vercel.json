@@ -2,18 +2,5 @@
   "buildCommand": "cd web && npm run build",
   "outputDirectory": "web/.next",
   "installCommand": "npm install",
-  "framework": "nextjs",
-  "env": {
-    "HEDERA_NETWORK": "@hedera-network",
-    "HEDERA_ACCOUNT_ID": "@hedera-account-id",
-    "HEDERA_PRIVATE_KEY": "@hedera-private-key",
-    "HEDERA_MIRROR_NODE_URL": "@hedera-mirror-node-url",
-    "HEDERA_MAINNET_ACCOUNT_ID": "@hedera-mainnet-account-id",
-    "HEDERA_MAINNET_PRIVATE_KEY": "@hedera-mainnet-private-key",
-    "OPENROUTER_API_KEY": "@openrouter-api-key",
-    "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
-    "LLM_MODEL": "qwen/qwen3-next-80b-a3b-instruct:free",
-    "BONZO_LENDING_POOL_EVM_ADDRESS": "0x236897c518996163E7b313aD21D1C9fCC7BA1afc",
-    "BONZO_PROTOCOL_DATA_PROVIDER": "0x78feDC4D7010E409A0c0c7aF964cc517D3dCde18"
-  }
+  "framework": "nextjs"
 }
