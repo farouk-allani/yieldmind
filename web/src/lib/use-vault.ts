@@ -91,6 +91,59 @@ async function resolveHederaId(evmAddress: string, mirrorNodeUrl: string): Promi
 }
 
 /**
+ * Verify a transaction's status on Mirror Node.
+ * WalletConnect returns a transactionId even for reverted contracts,
+ * so we must check the receipt to know if it actually succeeded.
+ */
+async function verifyTransactionStatus(
+  txId: string,
+  mirrorNodeUrl: string
+): Promise<{ success: boolean; error?: string }> {
+  // Convert Hedera txId format (0.0.XXX@123.456) to Mirror Node format (0.0.XXX-123-456)
+  const mirrorTxId = txId.replace('@', '-').replace('.', '-', /* only the last dot in timestamp */);
+  // Actually, Mirror Node expects: accountId-seconds-nanos (e.g., 0.0.7546841-1774167824-390546588)
+  const parts = txId.split('@');
+  if (parts.length !== 2) return { success: true }; // Can't parse, assume OK
+  const [accountId, timestamp] = parts;
+  const mirrorFormat = `${accountId}-${timestamp.replace('.', '-')}`;
+
+  // Wait a moment for Mirror Node indexing
+  await new Promise((r) => setTimeout(r, 3000));
+
+  try {
+    const res = await fetch(`${mirrorNodeUrl}/api/v1/transactions/${mirrorFormat}`);
+    if (!res.ok) return { success: true }; // Can't verify, assume OK
+
+    const data = await res.json() as { transactions?: Array<{ result?: string; consensus_timestamp?: string }> };
+    const tx = data.transactions?.[0];
+    if (!tx) return { success: true };
+
+    if (tx.result === 'SUCCESS') return { success: true };
+
+    // Check for specific Bonzo Vault errors via contract results
+    if (tx.result === 'CONTRACT_REVERT_EXECUTED') {
+      try {
+        const contractRes = await fetch(`${mirrorNodeUrl}/api/v1/contracts/results?timestamp=${tx.consensus_timestamp || ''}&limit=1`);
+        if (contractRes.ok) {
+          const contractData = await contractRes.json() as { results?: Array<{ error_message?: string }> };
+          const errMsg = contractData.results?.[0]?.error_message || '';
+          if (errMsg.includes('44e8bd2c')) {
+            return {
+              success: false,
+              error: 'Bonzo Vault deposit failed — the vault pool position may be temporarily out of range. Please try again in a few minutes, or use Bonzo Lend for a simpler deposit.',
+            };
+          }
+        }
+      } catch { /* fall through to generic error */ }
+    }
+
+    return { success: false, error: `Transaction failed: ${tx.result}` };
+  } catch {
+    return { success: true }; // Mirror Node unreachable, assume OK
+  }
+}
+
+/**
  * Execute a Bonzo deposit using the Hedera SDK + WalletConnect.
  *
  * For HBAR: calls WHBARGateway.depositHBAR(lendingPool, onBehalfOf, referralCode)
@@ -164,7 +217,7 @@ async function depositViaHederaSDK(
       .setContractId(ContractId.fromString(knownIds.whbarGateway))
       .setGas(2_000_000) // WHBARGateway needs ~1.75M gas (wrap + approve + deposit)
       .setPayableAmount(hbarAmount)
-      .setFunctionParameters(callData)
+      .setFunctionParameters(new Uint8Array(callData))
       .setMaxTransactionFee(new Hbar(10));
 
     setStatus('confirming');
@@ -176,6 +229,16 @@ async function depositViaHederaSDK(
 
     console.log('[Vault/SDK] WHBARGateway deposit result:', result);
     const txId = (result as { transactionId?: string })?.transactionId || null;
+
+    // Verify on Mirror Node — WalletConnect returns txId even for reverts
+    if (txId) {
+      const verified = await verifyTransactionStatus(txId, mirrorNodeUrl);
+      if (!verified.success) {
+        setStatus('failed');
+        return { status: 'failed', txHash: txId, error: verified.error || 'WHBARGateway deposit reverted on-chain' };
+      }
+    }
+
     setStatus('confirmed');
     return { status: 'confirmed', txHash: txId, error: null };
 
@@ -323,7 +386,13 @@ async function depositBonzoVaultViaHederaSDK(
       const txId = (result as { transactionId?: string })?.transactionId || null;
       console.log(`[Vault/SDK] Vault deposit result:`, result);
 
+      // Verify on Mirror Node — WalletConnect returns txId even for reverts
       if (txId) {
+        const verified = await verifyTransactionStatus(txId, mirrorNodeUrl);
+        if (!verified.success) {
+          setStatus('failed');
+          return { status: 'failed', txHash: txId, error: verified.error || 'Contract execution reverted' };
+        }
         setStatus('confirmed');
         return { status: 'confirmed', txHash: txId, error: null };
       }
@@ -338,14 +407,104 @@ async function depositBonzoVaultViaHederaSDK(
       return { status: 'failed', txHash: null, error: `Vault deposit failed: ${errMsg}` };
     }
   } else {
-    // ERC-20 vault deposits not yet supported
+    // ── ERC-20 → Bonzo Vault: approve + vault.deposit(uint256) ──
+    // deposit(uint256) selector: 0xb6b55f25
+    const { AccountAllowanceApproveTransaction, TokenId } =
+      await import('@hiero-ledger/sdk');
+
     console.log(`[Vault/SDK] ERC-20 vault deposit: ${amount} ${symbol} into ${vaultHederaId}`);
-    setStatus('failed');
-    return {
-      status: 'failed',
-      txHash: null,
-      error: `ERC-20 vault deposits not yet supported via WalletConnect. Use MetaMask or deposit at app.bonzo.finance/vaults.`,
+
+    // Step 1: Resolve the ERC-20 token's Hedera ID from vault EVM address lookup
+    // For known tokens in long-zero format, extract from the address directly
+    let tokenEvmAddress = '';
+    // We need the underlying token address, not the vault address.
+    // The vault accepts a deposit token — look it up from known mappings.
+    // Token Hedera IDs — from agents/src/config/bonzo-contracts.ts (SINGLE SOURCE OF TRUTH)
+    const KNOWN_TOKEN_IDS: Record<string, string> = {
+      'USDC': '0.0.456858',
+      'SAUCE': '0.0.731861',
+      'BONZO': '0.0.8279134',
+      'KARATE': '0.0.2283230',
+      'DOVU': '0.0.3716059',
+      'PACK': '0.0.4794920',
+      'HST': '0.0.968069',
+      'STEAM': '0.0.3210123',
+      'GRELF': '0.0.1159074',
+      'KBL': '0.0.5989978',
+      'HBARX': '0.0.834116',
+      'XSAUCE': '0.0.1460200',
+      'XBONZO': '0.0.8490541',
     };
+
+    // Clean the symbol for lookup (USDC, SAUCE, etc.)
+    const cleanSymbol = symbol.replace(/\s*\(.*\)/, '').toUpperCase();
+    const tokenHederaId = KNOWN_TOKEN_IDS[cleanSymbol];
+
+    if (!tokenHederaId) {
+      setStatus('failed');
+      return { status: 'failed', txHash: null, error: `Unknown token ${cleanSymbol} — cannot resolve Hedera token ID for approval.` };
+    }
+
+    try {
+      // Step 1: Approve the vault to spend user's tokens
+      setStatus('approving');
+      console.log(`[Vault/SDK] Approving ${amount} ${cleanSymbol} (${tokenHederaId}) for vault ${vaultHederaId}...`);
+
+      const approveTx = new AccountAllowanceApproveTransaction()
+        .approveTokenAllowance(
+          TokenId.fromString(tokenHederaId),
+          accountId,
+          vaultHederaId,
+          Number(rawAmount),
+        )
+        .setMaxTransactionFee(new Hbar(2));
+
+      await connector.signAndExecuteTransaction({
+        signerAccountId,
+        transactionList: transactionToBase64String(approveTx as any),
+      });
+      console.log(`[Vault/SDK] Token approval confirmed.`);
+
+      // Step 2: Call vault.deposit(uint256 amount)
+      setStatus('signing');
+      console.log(`[Vault/SDK] Calling vault.deposit(${rawAmount}) on ${vaultHederaId}...`);
+
+      const amountHex = rawAmount.toString(16).padStart(64, '0');
+      const callData = Buffer.from('b6b55f25' + amountHex, 'hex');
+
+      const depositTx = new ContractExecuteTransaction()
+        .setContractId(ContractId.fromString(vaultHederaId))
+        .setFunctionParameters(new Uint8Array(callData))
+        .setGas(3_000_000)
+        .setMaxTransactionFee(new Hbar(15));
+
+      setStatus('confirming');
+      const result = await connector.signAndExecuteTransaction({
+        signerAccountId,
+        transactionList: transactionToBase64String(depositTx as any),
+      });
+
+      const txId = (result as { transactionId?: string })?.transactionId || null;
+      console.log(`[Vault/SDK] ERC-20 vault deposit result:`, result);
+
+      // Verify transaction status on Mirror Node — WalletConnect returns txId
+      // even for reverted contracts, so we must check the receipt
+      if (txId) {
+        const verified = await verifyTransactionStatus(txId, mirrorNodeUrl);
+        if (!verified.success) {
+          setStatus('failed');
+          return { status: 'failed', txHash: txId, error: verified.error || 'Contract execution reverted' };
+        }
+      }
+
+      setStatus('confirmed');
+      return { status: 'confirmed', txHash: txId, error: null };
+    } catch (err: unknown) {
+      const errMsg = (err as any)?.message || String(err);
+      console.warn(`[Vault/SDK] ERC-20 vault deposit failed: ${errMsg}`);
+      setStatus('failed');
+      return { status: 'failed', txHash: null, error: `Vault deposit failed: ${errMsg}` };
+    }
   }
 }
 
@@ -375,7 +534,7 @@ async function depositDualTokenVaultViaHederaSDK(
   vaultEvmAddress: string,
   setStatus: (s: TxStatus) => void,
 ): Promise<TxResult> {
-  const { ContractExecuteTransaction, ContractId, Hbar, AccountAllowanceApproveTransaction, TokenId } =
+  const { ContractExecuteTransaction, ContractId, Hbar } =
     await import('@hiero-ledger/sdk');
   const { getHederaConnector, transactionToBase64String } =
     await import('./hedera-wallet-connect');
@@ -402,30 +561,34 @@ async function depositDualTokenVaultViaHederaSDK(
   console.log(`[Vault/SDK] HBAR side: ${hbarAmount} HBAR (${rawHbar} tinybar) | ERC-20 side: ${erc20Amount} ${erc20Symbol} (${rawErc20})`);
 
   // Step 1: Approve ERC-20 token (e.g., USDC) to vault contract
+  // IMPORTANT: Must use ERC-20 approve() via ContractExecuteTransaction, NOT AccountAllowanceApproveTransaction.
+  // AccountAllowanceApproveTransaction sets allowance against the Hedera system address (0x00...009b18f5),
+  // but the vault checks allowance(user, address(this)) where address(this) is the EVM address (0x724f...).
+  // These are different addresses, so the vault's transferFrom fails with the native allowance.
   if (erc20Amount > 0) {
     try {
       setStatus('approving');
-      console.log(`[Vault/SDK] Approving ${erc20Amount} ${erc20Symbol} (${erc20Address}) to vault ${dualDeposit.vaultContractId}`);
-
-      // Resolve ERC-20 token Hedera ID from its EVM address
-      // USDC = 0x000000000000000000000000000000000006f89a → extract last 8 hex chars
       const tokenIdNum = parseInt(erc20Address.slice(-8), 16);
-      const tokenId = `0.0.${tokenIdNum}`;
+      const tokenContractId = `0.0.${tokenIdNum}`;
+      console.log(`[Vault/SDK] ERC-20 approve ${erc20Amount} ${erc20Symbol} (${tokenContractId}) → vault ${vaultEvmAddress}`);
 
-      const approveTx = new AccountAllowanceApproveTransaction()
-        .approveTokenAllowance(
-          TokenId.fromString(tokenId),
-          accountId,
-          ContractId.fromString(dualDeposit.vaultContractId).toString(),
-          rawErc20 as never,
-        )
+      // Build approve(address spender, uint256 amount) calldata
+      // Selector: 0x095ea7b3
+      const spenderPadded = vaultEvmAddress.replace('0x', '').toLowerCase().padStart(64, '0');
+      const amountPadded = rawErc20.toString(16).padStart(64, '0');
+      const approveCallData = Buffer.from('095ea7b3' + spenderPadded + amountPadded, 'hex');
+
+      const approveTx = new ContractExecuteTransaction()
+        .setContractId(ContractId.fromString(tokenContractId))
+        .setFunctionParameters(new Uint8Array(approveCallData))
+        .setGas(1_500_000) // HTS precompile needs more gas than standard EVM
         .setMaxTransactionFee(new Hbar(5));
 
       const approveResult = await connector.signAndExecuteTransaction({
         signerAccountId,
         transactionList: transactionToBase64String(approveTx as never),
       });
-      console.log(`[Vault/SDK] Approval result:`, approveResult);
+      console.log(`[Vault/SDK] ERC-20 approve result:`, approveResult);
     } catch (err) {
       console.error('[Vault/SDK] ERC-20 approval failed:', err);
       setStatus('failed');
@@ -450,14 +613,18 @@ async function depositDualTokenVaultViaHederaSDK(
     const p2 = '0'.padStart(64, '0'); // minShares = 0
     const callData = Buffer.from('00aeef8a' + p0 + p1 + p2, 'hex');
 
-    console.log(`[Vault/SDK] deposit(${amount0Raw}, ${amount1Raw}, 0) → vault ${dualDeposit.vaultContractId}`);
+    // Send ~15% more HBAR than amount1 — vault wraps HBAR→WHBAR internally.
+    // Bonzo's own UI uses ~15% buffer (confirmed from on-chain successful deposits).
+    // Round to 8 decimals (tinybar precision) to avoid "Hbar in tinybars contains decimals" error.
+    const hbarPayable = hbarAmount > 0 ? Math.round(hbarAmount * 1.157 * 1e8) / 1e8 : 0;
+    console.log(`[Vault/SDK] deposit(${amount0Raw}, ${amount1Raw}, 0) → vault ${dualDeposit.vaultContractId} | payable: ${hbarPayable.toFixed(4)} HBAR`);
 
     const depositTx = new ContractExecuteTransaction()
       .setContractId(ContractId.fromString(dualDeposit.vaultContractId))
       .setFunctionParameters(new Uint8Array(callData))
-      .setGas(3_000_000)
-      .setPayableAmount(new Hbar(hbarAmount))
-      .setMaxTransactionFee(new Hbar(15));
+      .setGas(4_000_000) // Bonzo UI uses 4M gas for vault deposits
+      .setPayableAmount(new Hbar(hbarPayable))
+      .setMaxTransactionFee(new Hbar(100)); // Match Bonzo UI fee budget (~96 HBAR for complex deposits)
 
     setStatus('confirming');
     const result = await connector.signAndExecuteTransaction({
@@ -467,6 +634,17 @@ async function depositDualTokenVaultViaHederaSDK(
 
     const txId = (result as { transactionId?: string })?.transactionId || null;
     console.log(`[Vault/SDK] Dual deposit result:`, result);
+
+    // Verify on Mirror Node — signAndExecuteTransaction returns txId even for reverts
+    if (txId) {
+      const { getNetworkConfig } = await import('./network-config');
+      const mirrorNodeUrl = getNetworkConfig().mirrorNodeUrl;
+      const verified = await verifyTransactionStatus(txId, mirrorNodeUrl);
+      if (!verified.success) {
+        setStatus('failed');
+        return { status: 'failed', txHash: txId, error: verified.error || 'Vault deposit reverted on-chain' };
+      }
+    }
 
     setStatus('confirmed');
     return {

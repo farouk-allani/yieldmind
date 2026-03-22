@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.41",
     "@hashgraph/hedera-wallet-connect": "^2.0.6",
     "@hashgraph/sdk": "^2.51.0",
     "@hiero-ledger/proto": "^2.26.0-beta.3",
@@ -16,6 +17,7 @@
     "@supabase/supabase-js": "^2.99.1",
     "@walletconnect/modal": "^2.7.0",
     "@yieldmind/agents": "*",
+    "ai": "^6.0.116",
     "ethers": "^6.16.0",
     "framer-motion": "^11.0.0",
     "lucide-react": "^0.575.0",

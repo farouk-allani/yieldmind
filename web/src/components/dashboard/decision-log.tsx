@@ -92,6 +92,11 @@ export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
                     <span className="text-[11px] text-text-secondary">
                       {decision.action}
                     </span>
+                    {decision.data?.mode === 'autonomous' && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-[4px] bg-accent/10 text-accent font-medium">
+                        Agent Kit
+                      </span>
+                    )}
                     {dataSource && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-[4px] bg-supply/10 text-supply font-medium">
                         {dataSource}

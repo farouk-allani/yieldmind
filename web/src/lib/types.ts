@@ -106,6 +106,7 @@ export interface ChatResponse {
   agentStates: AgentState[];
   strategy?: Strategy;
   decisions: DecisionLog[];
+  mode?: 'autonomous' | 'autonomous-unavailable';
 }
 
 export interface ChatMessage {

@@ -293,21 +293,10 @@ export class AgentCoordinator {
     const executable = strategy.vaults.filter(
       (v: { allocation: number }) => v.allocation > 0
     );
-    const recommendations = strategy.vaults.filter(
-      (v: { allocation: number }) => v.allocation === 0
-    );
-
     const execSummaries = executable
       .map(
         (v: { vaultName: string; allocation: number; expectedApy: number; riskLevel: string }) =>
           `• ${v.vaultName}: ${v.allocation}% allocation, ~${v.expectedApy.toFixed(1)}% APY (${v.riskLevel} risk)`
-      )
-      .join('\n');
-
-    const recSummaries = recommendations
-      .map(
-        (v: { vaultName: string; expectedApy: number; riskLevel: string }) =>
-          `• ${v.vaultName}: ${v.expectedApy.toFixed(1)}% APY (${v.riskLevel} risk) — deposit at app.bonzo.finance/vaults`
       )
       .join('\n');
 
@@ -316,10 +305,6 @@ export class AgentCoordinator {
       '',
       execSummaries,
     ];
-
-    if (recSummaries) {
-      lines.push('', '**Higher APY vault opportunities** (require both tokens):', recSummaries);
-    }
 
     lines.push(
       '',
@@ -332,6 +317,85 @@ export class AgentCoordinator {
     );
 
     return lines.join('\n');
+  }
+
+  /**
+   * Process a user's yield intent using the autonomous Hedera Agent Kit path.
+   *
+   * Instead of the manual Scout → Strategist → user-signs flow, the LangChain
+   * keeper agent uses Agent Kit tools to autonomously:
+   * 1. Scan vaults
+   * 2. Analyze volatility + sentiment
+   * 3. Pick the best strategy
+   * 4. Execute the deposit on-chain via Agent Kit
+   * 5. Log everything to HCS
+   *
+   * This is the Bonzo bounty path: "executes the deposit transaction on the
+   * user's behalf using the Agent Kit."
+   */
+  async processIntentAutonomous(
+    intent: UserIntent,
+    keeperAgent: { invoke: (input: string) => Promise<{ output: string; intermediateSteps?: unknown[] }> }
+  ): Promise<ChatResponse> {
+    const { sessionId } = intent;
+    if (!this.sessions.has(sessionId)) {
+      await this.initSession(sessionId);
+    }
+
+    const decisions = this.getOrCreateSessionDecisions(sessionId);
+    const topicId = this.sessions.get(sessionId);
+
+    // Build a focused prompt for the keeper agent.
+    // Free-tier LLMs struggle with many steps — keep it simple and direct.
+    const prompt =
+      `Deposit ${intent.targetAmount} ${intent.tokenSymbol} into the best Bonzo vault for a ${intent.riskTolerance} risk user.\n\n` +
+      `Steps:\n` +
+      `1. Use scan_bonzo_vaults to find available vaults for ${intent.tokenSymbol}\n` +
+      `2. Use deposit_hbar_to_bonzo to deposit ${intent.targetAmount} HBAR\n` +
+      (topicId
+        ? `3. Use submit_topic_message to log your decision to HCS topic ${topicId}\n`
+        : '') +
+      `\nPick the vault with the best APY that matches ${intent.riskTolerance} risk. Explain your choice briefly.`;
+
+    try {
+      const result = await keeperAgent.invoke(prompt);
+
+      // Create a decision log for the autonomous execution
+      const decision: DecisionLog = {
+        agentId: 'yieldmind-keeper-agent',
+        agentRole: 'executor',
+        action: 'autonomous-execution',
+        reasoning: result.output.slice(0, 1000),
+        confidence: 0.9,
+        timestamp: new Date().toISOString(),
+        sessionId,
+        data: {
+          mode: 'autonomous',
+          intent: {
+            amount: intent.targetAmount,
+            token: intent.tokenSymbol,
+            risk: intent.riskTolerance,
+          },
+          agentOutput: result.output,
+          intermediateSteps: result.intermediateSteps?.length || 0,
+        },
+      };
+      decisions.push(decision);
+
+      return {
+        message: result.output,
+        agentStates: this.getAgentStates(),
+        decisions: decisions.slice(-5),
+      };
+    } catch (error) {
+      const errorMsg =
+        error instanceof Error ? error.message : String(error);
+      return {
+        message: `Autonomous agent encountered an error: ${errorMsg}. Falling back to manual mode.`,
+        agentStates: this.getAgentStates(),
+        decisions: decisions.slice(-5),
+      };
+    }
   }
 
   private formatExecutionMessage(decision: DecisionLog): string {

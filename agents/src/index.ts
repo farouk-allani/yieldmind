@@ -10,6 +10,9 @@ import { SentinelAgent } from './agents/sentinel.js';
 import { AgentCoordinator } from './core/agent-coordinator.js';
 import { LLMClient } from './core/llm-client.js';
 import { KeeperService } from './core/keeper-service.js';
+import { createHederaToolkit } from './core/hedera-toolkit.js';
+import { createKeeperAgent, createKeeperLoop } from './core/keeper-agent.js';
+import type { KeeperLoopState } from './core/keeper-agent.js';
 import { getNetworkConfig, getBonzoNetworkConfig } from './config/index.js';
 import type { UserIntent } from './types/index.js';
 
@@ -69,6 +72,54 @@ export function createRuntime() {
     sentinel,
   });
 
+  // ── Hedera Agent Kit (Bonzo bounty requirement) ──
+  // Enables autonomous on-chain execution via the official Hedera Agent Kit
+  let hederaToolkit: ReturnType<typeof createHederaToolkit> | null = null;
+  let keeperAgent: ReturnType<typeof createKeeperAgent> | null = null;
+  let keeperLoop: ReturnType<typeof createKeeperLoop> | null = null;
+
+  const mainnetAccountId = process.env.HEDERA_MAINNET_ACCOUNT_ID;
+  const mainnetPrivateKey = process.env.HEDERA_MAINNET_PRIVATE_KEY;
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+
+  if (mainnetAccountId && mainnetPrivateKey && openRouterKey) {
+    try {
+      hederaToolkit = createHederaToolkit({
+        mainnetAccountId,
+        mainnetPrivateKey,
+        keeperService,
+        bonzoLendClient: bonzoClient,
+        bonzoVaultsClient,
+      });
+
+      keeperAgent = createKeeperAgent({
+        toolkit: hederaToolkit,
+        openRouterApiKey: openRouterKey,
+        model: process.env.LLM_MODEL,
+      });
+
+      keeperLoop = createKeeperLoop({
+        toolkit: hederaToolkit,
+        openRouterApiKey: openRouterKey,
+        model: process.env.LLM_MODEL,
+        keeperService,
+        intervalMs: parseInt(process.env.KEEPER_INTERVAL_MS || '300000', 10),
+      });
+
+      console.log('   Agent Kit: Hedera Agent Kit initialized (AUTONOMOUS mode, mainnet)');
+      console.log(`   Keeper Agent: LangChain ReAct agent with ${hederaToolkit.getAllTools().length} tools`);
+    } catch (error) {
+      console.warn(
+        '   Agent Kit: Failed to initialize —',
+        error instanceof Error ? error.message : error
+      );
+    }
+  } else {
+    console.log(
+      '   Agent Kit: Not configured (set HEDERA_MAINNET_ACCOUNT_ID, HEDERA_MAINNET_PRIVATE_KEY, OPENROUTER_API_KEY)'
+    );
+  }
+
   const hcsConfig = getNetworkConfig();
   const bonzoConfig = getBonzoNetworkConfig();
   console.log('YieldMind Agent Runtime initialized');
@@ -86,6 +137,10 @@ export function createRuntime() {
     llmClient,
     keeperService,
     agents: { scout, strategist, executor, sentinel },
+    // Agent Kit (Bonzo bounty)
+    hederaToolkit,
+    keeperAgent,
+    keeperLoop,
   };
 }
 
@@ -296,3 +351,4 @@ export { AgentCoordinator } from './core/agent-coordinator.js';
 export { LLMClient } from './core/llm-client.js';
 export { KeeperService } from './core/keeper-service.js';
 export type { KeeperDecision, VolatilityData, SentimentData } from './core/keeper-service.js';
+export type { KeeperLoopState } from './core/keeper-agent.js';

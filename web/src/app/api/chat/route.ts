@@ -1,10 +1,29 @@
 import { NextResponse } from 'next/server';
+import { streamText } from 'ai';
+import { createOpenAI } from '@ai-sdk/openai';
 import { agentRuntime, parseIntent, getRuntimeError } from '@/lib/runtime';
 
 /**
+ * POST /api/chat
+ *
+ * Chat endpoint with two intelligence levels:
+ * - Standard: Scout → Strategist pipeline (fast, rule-based)
+ * - Enhanced (Agent Kit): Keeper agent adds volatility + sentiment analysis (smarter)
+ *
+ * In BOTH modes, the user signs deposits with their own wallet.
+ * The Agent Kit provides intelligence, NOT fund custody.
+ *
+ * Body: { message, sessionId, autonomous?, stream? }
+ */
+
+// OpenRouter provider via Vercel AI SDK
+const openrouter = createOpenAI({
+  baseURL: 'https://openrouter.ai/api/v1',
+  apiKey: process.env.OPENROUTER_API_KEY || '',
+});
+
+/**
  * General-purpose responses for non-yield queries.
- * When the user asks a question rather than expressing a yield intent,
- * we respond helpfully without triggering the agent pipeline.
  */
 function handleGeneralQuery(message: string): string {
   const lower = message.toLowerCase();
@@ -70,14 +89,21 @@ function handleGeneralQuery(message: string): string {
       '',
       '**What I can do:**',
       '- Build custom yield strategies based on your risk tolerance',
-      '- Analyze Bonzo Finance lending reserves in real-time',
-      '- Execute deposits via your MetaMask wallet',
+      '- Analyze Bonzo Finance lending reserves and vaults in real-time',
+      '- Execute deposits autonomously via Hedera Agent Kit',
       '- Monitor your positions with the Sentinel agent',
+      '- Make intelligent harvest decisions using volatility + sentiment analysis',
       '',
       '**Try saying:**',
       '- "I want safe yield on 100 HBAR"',
       '- "Aggressive strategy for 500 HBAR"',
       '- "Conservative yield on USDC"',
+      '',
+      '**Modes:**',
+      '- **Standard**: Scout + Strategist pick the best vault',
+      '- **Enhanced**: Adds volatility + sentiment analysis via Hedera Agent Kit (toggle in chat header)',
+      '',
+      'In both modes, **you sign deposits with your own wallet**. Your funds, your keys.',
       '',
       '**Other commands:**',
       '- Ask about withdrawals, monitoring, or where your funds are',
@@ -98,10 +124,26 @@ function handleGeneralQuery(message: string): string {
   ].join('\n');
 }
 
+const YIELDMIND_SYSTEM_PROMPT = `You are YieldMind, an intelligent DeFi yield advisor on Hedera.
+You help users earn yield on their crypto through Bonzo Finance vaults.
+
+Key facts:
+- You use Hedera Agent Kit for market intelligence (volatility, sentiment analysis)
+- Users always sign deposits with their own wallet — you never hold user funds
+- Every decision is logged to HCS (Hedera Consensus Service) for transparency
+- You support Bonzo Lend (lending pools) and Bonzo Vaults (auto-compounding DEX vaults)
+- Keeper agent monitors positions and executes harvests autonomously
+- Supported tokens: HBAR, USDC, SAUCE, BONZO, HBARX, and more
+
+When users want yield, guide them to express their intent clearly:
+amount + token + risk preference (e.g., "I want safe yield on 100 HBAR")
+
+Be concise, data-driven, and transparent about risks.`;
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { message, sessionId } = body;
+    const { message, sessionId, autonomous, stream } = body;
 
     if (!message || typeof message !== 'string') {
       return NextResponse.json(
@@ -124,8 +166,22 @@ export async function POST(request: Request) {
     // Parse intent — returns null if not a yield query
     const intent = await parseIntent(message, sid);
 
+    // ── Streaming mode (Vercel AI SDK) ──
+    // Used for general queries and autonomous execution
+    if (stream && !intent) {
+      // General query — stream via Vercel AI SDK
+      const result = streamText({
+        model: openrouter(process.env.LLM_MODEL || 'qwen/qwen3-32b:free'),
+        system: YIELDMIND_SYSTEM_PROMPT,
+        prompt: message,
+        temperature: 0.3,
+      });
+
+      return result.toTextStreamResponse();
+    }
+
     if (!intent) {
-      // Not a yield intent — respond with helpful info
+      // Non-streaming general query
       return NextResponse.json({
         message: handleGeneralQuery(message),
         agentStates: agentRuntime.coordinator.getAgentStates(),
@@ -133,7 +189,51 @@ export async function POST(request: Request) {
       });
     }
 
-    // It's a yield intent — run the full agent pipeline
+    // ── Enhanced mode (Agent Kit): Add volatility + sentiment intelligence ──
+    // Runs keeper service analysis (volatility + sentiment) in parallel with
+    // the standard Scout → Strategist pipeline. No LLM agent loop — direct
+    // service calls for reliability and speed.
+    if (autonomous && agentRuntime.keeperService) {
+      try {
+        const token = intent.tokenSymbol.toUpperCase();
+        // Run market analysis in parallel with standard pipeline
+        const [volatility, sentiment, standardResponse] = await Promise.all([
+          agentRuntime.keeperService.getVolatility(token).catch(() => null),
+          agentRuntime.keeperService.getSentiment(token).catch(() => null),
+          agentRuntime.coordinator.processIntent(intent),
+        ]);
+
+        // Build market intelligence summary
+        const insights: string[] = [];
+        if (volatility) {
+          const level = volatility.realizedVol24h > 60 ? 'High' : volatility.realizedVol24h > 30 ? 'Moderate' : 'Low';
+          insights.push(`**Volatility:** ${level} (${volatility.realizedVol24h.toFixed(1)}% 24h, ${volatility.realizedVol7d.toFixed(1)}% 7d)`);
+          insights.push(`**Price:** $${volatility.currentPrice.toFixed(4)} (${volatility.priceChange24h >= 0 ? '+' : ''}${volatility.priceChange24h.toFixed(2)}% 24h)`);
+        }
+        if (sentiment) {
+          const label = sentiment.sentiment === 'bullish' ? 'Bullish' : sentiment.sentiment === 'bearish' ? 'Bearish' : 'Neutral';
+          insights.push(`**Sentiment:** ${label} (${(sentiment.confidence * 100).toFixed(0)}% confidence)`);
+          if (sentiment.reasoning) {
+            insights.push(`**Analysis:** ${sentiment.reasoning}`);
+          }
+        }
+
+        if (insights.length > 0) {
+          const analysis = '\n\n**Agent Kit Market Analysis:**\n' + insights.join('\n');
+          return NextResponse.json({
+            ...standardResponse,
+            message: standardResponse.message + analysis,
+            mode: 'enhanced',
+          });
+        }
+
+        return NextResponse.json(standardResponse);
+      } catch {
+        console.log('[API /chat] Enhanced analysis failed, using standard pipeline...');
+      }
+    }
+
+    // ── Standard mode: Scout → Strategist → user approves & signs ──
     const response = await agentRuntime.coordinator.processIntent(intent);
 
     return NextResponse.json(response);

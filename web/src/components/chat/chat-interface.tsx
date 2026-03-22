@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Check, X, Loader2, Wallet, ShieldCheck, ShieldAlert, Zap, History } from 'lucide-react';
+import { Send, Check, X, Loader2, Wallet, ShieldCheck, ShieldAlert, Zap, History, Bot, User } from 'lucide-react';
 import { MessageBubble } from './message-bubble';
 import { SessionSidebar } from './session-sidebar';
 import { useWallet } from '@/lib/wallet-context';
@@ -33,6 +33,7 @@ export function ChatInterface({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [autonomousMode, setAutonomousMode] = useState(false);
 
   const wallet = useWallet();
   const vault = useVault();
@@ -352,7 +353,10 @@ export function ChatInterface({
     chatHistory.persistMessage(sessionId, 'user', trimmed);
 
     try {
-      const response = await sendChatMessage(trimmed, sessionId);
+      const response = await sendChatMessage(trimmed, sessionId, {
+        autonomous: autonomousMode,
+      });
+      // Always show strategy card for user to approve — user signs with their wallet
       if (response.strategy) {
         setPendingStrategy(response.strategy);
       }
@@ -456,6 +460,25 @@ export function ChatInterface({
                 : sessionId) : ''}
             </p>
           </div>
+          {/* Autonomous Mode Toggle */}
+          <button
+            onClick={() => setAutonomousMode(!autonomousMode)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-[8px] text-[10px] font-medium transition-colors ${
+              autonomousMode
+                ? 'bg-supply/20 text-supply border border-supply/30'
+                : 'bg-white/5 text-text-muted border border-white/10 hover:bg-white/10'
+            }`}
+            title={autonomousMode
+              ? 'Enhanced: Agent Kit adds volatility + sentiment analysis to vault picks'
+              : 'Standard: Scout + Strategist pipeline'}
+          >
+            {autonomousMode ? (
+              <Bot className="w-3 h-3" />
+            ) : (
+              <User className="w-3 h-3" />
+            )}
+            {autonomousMode ? 'Enhanced' : 'Standard'}
+          </button>
           <div className="flex items-center gap-1.5">
             <div className="w-1.5 h-1.5 rounded-full bg-supply" />
             <span className="text-[10px] text-text-muted">Connected</span>
@@ -648,59 +671,69 @@ function StrategyApprovalCard({
 
       {/* Executable allocations */}
       <div className="px-4 pb-3 space-y-1.5">
-        {strategy.vaults.filter((v) => v.allocation > 0).map((v, i) => (
-          <div
-            key={i}
-            className="flex items-center justify-between py-2 px-3 rounded-[8px] bg-[rgba(255,255,255,0.03)] border border-border-subtle"
-          >
-            <div className="flex items-center gap-2.5">
-              <img src="/bonzo.webp" alt="Bonzo" className="w-5 h-5 rounded-full flex-shrink-0" />
-              <div>
-                <div className="text-[13px] font-medium text-text-primary leading-tight">{v.vaultName}</div>
-                <div className="text-[11px] text-text-muted">{v.symbol} · {v.productType === 'bonzo-vault' ? 'Bonzo Vault' : 'Bonzo Lend'}</div>
-              </div>
-            </div>
-            <div className="text-right flex-shrink-0">
-              <div className="text-[13px] font-semibold text-text-primary">{v.allocation}%</div>
-              <div className="text-[11px] text-supply">{v.expectedApy.toFixed(2)}% APY</div>
-            </div>
-          </div>
-        ))}
-
-        {/* Vault recommendations (not auto-deposited) */}
-        {strategy.vaults.filter((v) => v.allocation === 0).length > 0 && (
-          <>
-            <div className="text-[10px] text-text-muted uppercase tracking-wide pt-2 pb-1">
-              Higher APY Opportunities (requires both tokens)
-            </div>
-            {strategy.vaults.filter((v) => v.allocation === 0).map((v, i) => (
+        {strategy.vaults.filter((v) => v.allocation > 0).map((v, i) => {
+          const dualHint = (v as any).dualTokenHint as { pairedToken: string; suggestedSplit: string } | undefined;
+          return (
+            <div key={i}>
               <div
-                key={`rec-${i}`}
-                className="flex items-center justify-between py-2 px-3 rounded-[8px] bg-[rgba(255,255,255,0.02)] border border-border-subtle border-dashed opacity-75"
+                className="flex items-center justify-between py-2 px-3 rounded-[8px] bg-[rgba(255,255,255,0.03)] border border-border-subtle"
               >
                 <div className="flex items-center gap-2.5">
                   <img src="/bonzo.webp" alt="Bonzo" className="w-5 h-5 rounded-full flex-shrink-0" />
                   <div>
-                    <div className="text-[12px] font-medium text-text-secondary leading-tight">{v.vaultName}</div>
-                    <div className="text-[11px] text-text-muted">{v.symbol} · Bonzo Vault</div>
+                    <div className="text-[13px] font-medium text-text-primary leading-tight">{v.vaultName}</div>
+                    <div className="text-[11px] text-text-muted">{v.symbol} · {v.productType === 'bonzo-vault' ? 'Bonzo Vault' : 'Bonzo Lend'}</div>
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <div className="text-[12px] font-semibold text-points">{v.expectedApy.toFixed(1)}% APY</div>
-                  <a
-                    href="https://app.bonzo.finance/vaults"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[10px] text-accent hover:text-accent/80"
-                  >
-                    Deposit on Bonzo →
-                  </a>
+                  <div className="text-[13px] font-semibold text-text-primary">{v.allocation}%</div>
+                  <div className="text-[11px] text-supply">{v.expectedApy.toFixed(2)}% APY</div>
                 </div>
               </div>
-            ))}
-          </>
-        )}
+              {dualHint && (
+                <div className="mt-1 px-3 py-2 rounded-[6px] bg-points/5 border border-points/15 text-[11px] text-points">
+                  Requires both tokens: {dualHint.suggestedSplit}. Try: &quot;I want yield on 5 HBAR and 5 {dualHint.pairedToken}&quot;
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
+
+      {/* Higher APY opportunities (informational, 0% allocation = not auto-executed) */}
+      {strategy.vaults.filter((v) => v.allocation === 0).length > 0 && (
+        <div className="px-4 pb-3">
+          <div className="text-[10px] text-text-muted uppercase tracking-wide mb-1.5">
+            Higher APY Opportunities (requires both tokens)
+          </div>
+          <div className="space-y-1.5">
+            {strategy.vaults.filter((v) => v.allocation === 0).map((v, i) => {
+              const dualHint = (v as any).dualTokenHint as { pairedToken: string; suggestedSplit: string } | undefined;
+              return (
+                <div key={`alt-${i}`}>
+                  <div className="flex items-center justify-between py-2 px-3 rounded-[8px] bg-[rgba(255,255,255,0.02)] border border-border-subtle border-dashed">
+                    <div className="flex items-center gap-2.5">
+                      <img src="/bonzo.webp" alt="Bonzo" className="w-5 h-5 rounded-full flex-shrink-0 opacity-60" />
+                      <div>
+                        <div className="text-[12px] font-medium text-text-muted leading-tight">{v.vaultName}</div>
+                        <div className="text-[10px] text-text-muted/70">{v.symbol} · Bonzo Vault</div>
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="text-[13px] font-semibold text-supply">{v.expectedApy.toFixed(1)}% APY</div>
+                    </div>
+                  </div>
+                  {dualHint && (
+                    <div className="mt-1 px-3 py-1.5 rounded-[6px] bg-points/5 border border-points/15 text-[10px] text-points">
+                      {dualHint.suggestedSplit}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* AI reasoning excerpt */}
       {aiReasoning && (

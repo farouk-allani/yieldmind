@@ -62,8 +62,14 @@ export class ScoutAgent extends BaseAgent {
       const scoredVaults = this.scoreBonzoVaults(vaults, riskTolerance, tokenSymbol);
 
       // Combine and rank all options
+      // Ensure dual-asset vaults always get passed to the strategist
+      // (they may score lower on risk match but have much higher APY)
       const topLend = scoredLend.slice(0, 3);
-      const topVaults = scoredVaults.slice(0, 5);
+      const dualAssetAlways = scoredVaults.filter((v) => v.type === 'dual-asset-dex');
+      const rest = scoredVaults.filter((v) => v.type !== 'dual-asset-dex').slice(0, 5);
+      const topVaults = [...dualAssetAlways, ...rest.filter(
+        (v) => !dualAssetAlways.some((d) => d.vaultAddress === v.vaultAddress)
+      )];
       const reasoning = this.buildCombinedReasoning(topLend, topVaults, riskTolerance);
 
       const decision = this.createDecision(

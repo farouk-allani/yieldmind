@@ -8,6 +8,7 @@ import { ChatInterface } from '@/components/chat/chat-interface';
 import { AgentStatusPanel } from '@/components/dashboard/agent-status';
 import { DecisionLogPanel } from '@/components/dashboard/decision-log';
 import { PositionPanel } from '@/components/dashboard/position-panel';
+import { KeeperPanel } from '@/components/dashboard/keeper-panel';
 import { ConnectWalletButton } from '@/components/wallet/connect-button';
 import { NetworkToggle } from '@/components/wallet/network-toggle';
 import { fetchAgentStatus } from '@/lib/api';
@@ -93,6 +94,8 @@ export default function AppPage() {
           <PositionPanel activeStrategy={activeStrategy} />
           <div className="border-t border-border-subtle" />
           <AgentStatusPanel agents={agents} />
+          <div className="border-t border-border-subtle" />
+          <KeeperPanel />
           <div className="border-t border-border-subtle" />
           <DecisionLogPanel decisions={decisions} />
         </aside>

@@ -1,4 +1,5 @@
 import type { BonzoVaultInfo, RiskTolerance } from '../types/index.js';
+import { SINGLE_ASSET_DEX_VAULTS, LEVERAGED_LST_VAULTS, getToken } from '../config/bonzo-contracts.js';
 
 // ── Bonzo Vaults API response types ─────────────────────────────────
 // Source: https://mainnet-vaults.bonzo.finance/v1/api/vaults
@@ -73,7 +74,12 @@ export class BonzoVaultsClient {
   private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
   /**
-   * Get all available Bonzo Vaults with live API data.
+   * Get all available Bonzo Vaults — combines API data + on-chain single-asset vaults.
+   *
+   * The Bonzo Vaults API only returns 4 dual-asset vaults, but there are 15+
+   * single-asset vaults deployed on mainnet (from bonzo-contracts.ts).
+   * We merge both sources so the strategist can recommend single-asset vaults
+   * for users who have only one token (e.g., "yield on 10 HBAR").
    */
   async getVaults(): Promise<BonzoVaultInfo[]> {
     if (this.cachedVaults && Date.now() < this.cacheExpiry) {
@@ -81,11 +87,13 @@ export class BonzoVaultsClient {
     }
 
     try {
-      const vaults = await this.fetchVaultsFromApi();
-      this.cachedVaults = vaults;
+      const apiVaults = await this.fetchVaultsFromApi();
+      const configVaults = this.getConfigVaults(apiVaults);
+      const allVaults = [...apiVaults, ...configVaults];
+      this.cachedVaults = allVaults;
       this.cacheExpiry = Date.now() + this.CACHE_TTL;
-      console.log(`[BonzoVaults] Fetched ${vaults.length} vaults from Bonzo Vaults API`);
-      return vaults;
+      console.log(`[BonzoVaults] ${apiVaults.length} API vaults + ${configVaults.length} on-chain single-asset vaults = ${allVaults.length} total`);
+      return allVaults;
     } catch (error) {
       console.error(
         '[BonzoVaults] Failed to fetch vault data:',
@@ -93,6 +101,71 @@ export class BonzoVaultsClient {
       );
       return this.cachedVaults || [];
     }
+  }
+
+  /**
+   * Build BonzoVaultInfo entries from on-chain single-asset vault configs.
+   * These vaults are deployed on mainnet but not in the Bonzo Vaults API.
+   * We don't have live APY data for them, so we estimate based on the
+   * paired dual-asset vault APY (single-sided earns ~40-60% of dual-sided).
+   */
+  private getConfigVaults(apiVaults: BonzoVaultInfo[]): BonzoVaultInfo[] {
+    // Build a map of API vault addresses to avoid duplicates
+    const apiAddresses = new Set(apiVaults.map((v) => v.vaultAddress.toLowerCase()));
+
+    const configVaults: BonzoVaultInfo[] = [];
+
+    for (const cfg of SINGLE_ASSET_DEX_VAULTS) {
+      if (apiAddresses.has(cfg.vaultAddress.toLowerCase())) continue;
+
+      const token = getToken(cfg.depositToken);
+      const decimals = token?.decimals || 8;
+      const displayToken = cfg.depositToken === 'WHBAR' ? 'HBAR' : cfg.depositToken;
+      const displayPaired = cfg.pairedToken === 'WHBAR' ? 'HBAR' : cfg.pairedToken;
+
+      // Estimate APY: find the matching dual-asset vault from API and use ~50% of its APY
+      const matchingDual = apiVaults.find((v) => {
+        const name = v.name.toUpperCase();
+        return name.includes(displayToken) || name.includes(cfg.depositToken);
+      });
+      const estimatedApy = matchingDual ? matchingDual.apy * 0.45 : 5.0;
+
+      configVaults.push({
+        vaultAddress: cfg.vaultAddress,
+        strategyAddress: cfg.strategyAddress,
+        type: 'single-asset-dex',
+        name: `${displayToken} (paired with ${displayPaired})`,
+        depositToken: displayToken,
+        pairedToken: displayPaired,
+        depositDecimals: decimals,
+        apy: estimatedApy,
+        tvl: 0, // Unknown — not in API
+        riskLevel: cfg.volatility.includes('high') ? 'aggressive' : 'moderate',
+        volatility: cfg.volatility,
+        safetyScore: 7,
+      });
+    }
+
+    // Add leveraged LST vaults
+    for (const cfg of LEVERAGED_LST_VAULTS) {
+      if (apiAddresses.has(cfg.vaultAddress.toLowerCase())) continue;
+      const token = getToken(cfg.depositToken);
+      configVaults.push({
+        vaultAddress: cfg.vaultAddress,
+        strategyAddress: cfg.strategyAddress,
+        type: 'leveraged-lst',
+        name: cfg.name,
+        depositToken: cfg.depositToken,
+        depositDecimals: token?.decimals || 8,
+        apy: 8.0, // Estimate for leveraged LST
+        tvl: 0,
+        riskLevel: 'moderate',
+        volatility: 'low',
+        safetyScore: 8,
+      });
+    }
+
+    return configVaults;
   }
 
   /**
@@ -161,16 +234,25 @@ export class BonzoVaultsClient {
       volatility,
       lastHarvest: vault.lastHarvest || undefined,
       safetyScore: vault.safetyScore,
+      // Token addresses for dual-asset deposits (deposit(uint256,uint256,uint256))
+      token0Address: asset0.address,
+      token1Address: isDualAsset ? asset1.address : undefined,
     };
   }
 
   /**
    * Infer vault type from API data.
-   * All current Bonzo Vaults are concentrated liquidity (dual asset).
+   * Staking pairs (BONZO-XBONZO, SAUCE-XSAUCE) are treated as single-asset
+   * because the "X" token is just the staked version of the same token.
    */
   private inferVaultType(vault: BonzoVaultsApiVault): 'single-asset-dex' | 'dual-asset-dex' | 'leveraged-lst' {
-    // All current Bonzo Vaults are dual-asset concentrated liquidity
     if (vault.assets.length >= 2) {
+      // Check if this is a staking pair (e.g., BONZO-XBONZO, SAUCE-XSAUCE)
+      const symbols = vault.assets.map((a) => a.symbol.toUpperCase());
+      const isStakingPair = symbols.some((s) =>
+        symbols.some((other) => other === `X${s}` || s === `X${other}`)
+      );
+      if (isStakingPair) return 'single-asset-dex';
       return 'dual-asset-dex';
     }
     return 'single-asset-dex';

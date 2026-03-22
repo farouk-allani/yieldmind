@@ -15,6 +15,14 @@ interface StrategistInput {
   vaultScanResults: Record<string, unknown>;
 }
 
+// Bonzo Vault EVM → Hedera contract ID mapping (needed for WalletConnect deposits)
+const KNOWN_VAULT_IDS: Record<string, string> = {
+  '0x724F19f52A3E0e9D2881587C997db93f9613B2C7': '0.0.10164469',  // USDC-HBAR
+  '0xcfba07324bd207C3ED41416a9a36f8184F9a2134': '0.0.10164550',  // BONZO-XBONZO
+  '0x8AEE31dFF6264074a1a3929432070E1605F6b783': '0.0.10164569',  // SAUCE-XSAUCE
+  '0x0171baa37fC9f56c98bD56FEB32bC28342944C6e': '0.0.10164765',  // USDC-SAUCE
+};
+
 const STRATEGIST_PROMPT = `You are YieldMind's DeFi Strategist AI running on Hedera. You analyze data from Bonzo Finance (both Bonzo Lend lending pools AND Bonzo Vaults auto-compounding concentrated liquidity vaults) to build optimal yield strategies.
 
 Given the user's intent and available options, explain your strategy reasoning in 2-3 sentences. Be specific about WHY you chose these allocations across Bonzo Lend and Bonzo Vaults. Mention concrete data: APY rates, strategy types (Single Asset DEX, Dual Asset DEX), risk levels. Explain the benefit of combining lending yield with vault auto-compounding. Your reasoning will be published on-chain via Hedera Consensus Service for full transparency.
@@ -66,7 +74,7 @@ export class StrategistAgent extends BaseAgent {
       }
 
       // Build strategy that combines Bonzo Lend + Bonzo Vaults
-      const strategy = this.buildCombinedStrategy(intent, topVaults, bonzoVaults);
+      const strategy = await this.buildCombinedStrategy(intent, topVaults, bonzoVaults);
 
       // LLM-powered reasoning (transparent AI differentiator)
       const reasoning = await this.generateReasoning(
@@ -122,15 +130,14 @@ export class StrategistAgent extends BaseAgent {
    * - Dual-asset Bonzo Vaults: when user has BOTH tokens (secondaryToken set)
    *   Uses deposit(uint256,uint256,uint256) = (amount0, amount1, minShares)
    *
-   * Recommended products (shown with link to Bonzo UI):
-   * - Dual-asset Bonzo Vaults: when user has only one token.
-   *   These are shown with allocation=0 as yield opportunities.
+   * Dual-asset Bonzo Vaults are only included when user has BOTH tokens.
+   * No external links — everything executes within YieldMind.
    */
-  private buildCombinedStrategy(
+  private async buildCombinedStrategy(
     intent: UserIntent,
     lendReserves: (VaultInfo & { score: number })[],
     bonzoVaults: (BonzoVaultInfo & { score: number })[]
-  ): Strategy {
+  ): Promise<Strategy> {
     const vaultStrategies: VaultStrategy[] = [];
 
     // ── Dual-token intent: user has both tokens → direct vault deposit ──
@@ -162,9 +169,22 @@ export class StrategistAgent extends BaseAgent {
     const bestSingleVault = singleAssetVaults[0] || null;
 
     // ── Executable allocations ──
-    if (bestLend && bestSingleVault) {
-      // Split between Lend + single-asset vault
+    // Bonzo Vaults use deposit(uint256 _amount0, uint256 _amount1, uint256 _minShares)
+    // with selector 0x00aeef8a. Single-sided deposits REVERT — both tokens required.
+    //
+    // Strategy for single-token users:
+    // - If user has USDC: split between Lend (stable) + Vault (auto-calc HBAR side)
+    // - If user has HBAR: 100% Lend (vault requires USDC as token0 > 0)
+    const bestDualVault = dualAssetVaults[0] || null;
+
+    // For USDC users: auto-calculate the HBAR needed for the vault side
+    // The vault requires both tokens in the correct ratio (based on current price)
+    const canDualDeposit = bestDualVault && userToken === 'USDC';
+
+    if (bestLend && bestDualVault && canDualDeposit) {
+      // Split between Lend (stable) + Vault (growth)
       const { lendPct, vaultPct } = this.getAllocationSplit(intent.riskTolerance);
+
       vaultStrategies.push({
         vaultAddress: bestLend.address,
         assetEvmAddress: bestLend.evmAddress,
@@ -174,24 +194,54 @@ export class StrategistAgent extends BaseAgent {
         allocation: lendPct,
         expectedApy: bestLend.apy,
         riskLevel: bestLend.riskLevel,
-        reasoning: `Allocated ${lendPct}% to Bonzo Lend — ${bestLend.tokenPair} at ${bestLend.apy.toFixed(2)}% supply APY.`,
+        reasoning: `${lendPct}% to Bonzo Lend — ${bestLend.tokenPair} at ${bestLend.apy.toFixed(2)}% supply APY.`,
         productType: 'bonzo-lend',
       });
+
+      // Vault deposit: user's USDC as token0 + proportional HBAR as token1
+      const tokens = bestDualVault.depositToken.split('-');
+      const token0Sym = tokens[0] || 'USDC';
+      const token1Sym = tokens[1] || 'HBAR';
+      const t0Decimals = bestDualVault.depositDecimals; // USDC = 6
+      const t1Decimals = token1Sym === 'HBAR' || token1Sym === 'WHBAR' ? 8 : 6;
+
+      // USDC amount for vault allocation
+      const usdcForVault = Math.round(intent.targetAmount * vaultPct / 100 * 1e6) / 1e6;
+
+      // Calculate proportional HBAR needed (fetch price or use pool ratio)
+      const hbarPrice = await this.getHbarPrice();
+      const hbarForVault = hbarPrice > 0
+        ? Math.round(usdcForVault / hbarPrice * 1e8) / 1e8
+        : 0;
+
       vaultStrategies.push({
-        vaultAddress: bestSingleVault.vaultAddress,
-        assetEvmAddress: bestSingleVault.vaultAddress,
-        symbol: bestSingleVault.depositToken,
-        decimals: bestSingleVault.depositDecimals,
-        vaultName: bestSingleVault.name,
+        vaultAddress: bestDualVault.vaultAddress,
+        assetEvmAddress: bestDualVault.vaultAddress,
+        symbol: bestDualVault.depositToken,
+        decimals: bestDualVault.depositDecimals,
+        vaultName: bestDualVault.name,
         allocation: vaultPct,
-        expectedApy: bestSingleVault.apy,
-        riskLevel: bestSingleVault.riskLevel,
-        reasoning: `Allocated ${vaultPct}% to Bonzo Vault — ${bestSingleVault.depositToken} at ${bestSingleVault.apy.toFixed(1)}% APY. Auto-compounding single-asset vault.`,
+        expectedApy: bestDualVault.apy,
+        riskLevel: bestDualVault.riskLevel,
+        reasoning: `${vaultPct}% to ${bestDualVault.name} at ${bestDualVault.apy.toFixed(1)}% APY — auto-compounding Bonzo Vault. Dual-token deposit: ${usdcForVault} USDC + ${hbarForVault.toFixed(2)} HBAR.`,
         productType: 'bonzo-vault',
-        vaultType: bestSingleVault.type,
-      });
+        vaultType: bestDualVault.type,
+        dualTokenDeposit: {
+          token0Symbol: token0Sym,
+          token0Address: bestDualVault.token0Address || '',
+          token0Decimals: t0Decimals,
+          token0Amount: usdcForVault,
+          token1Symbol: token1Sym,
+          token1Address: bestDualVault.token1Address || '',
+          token1Decimals: t1Decimals,
+          token1Amount: hbarForVault,
+          depositSelector: '0x00aeef8a', // deposit(uint256,uint256,uint256)
+          vaultContractId: KNOWN_VAULT_IDS[bestDualVault.vaultAddress] || '',
+        },
+      } as VaultStrategy);
     } else if (bestLend) {
-      // 100% to Lend (most common case — no single-asset vaults available)
+      // Can't do single-sided vault deposit (e.g., HBAR-only into USDC-HBAR)
+      // 100% to Bonzo Lend, show vault as opportunity
       vaultStrategies.push({
         vaultAddress: bestLend.address,
         assetEvmAddress: bestLend.evmAddress,
@@ -201,44 +251,38 @@ export class StrategistAgent extends BaseAgent {
         allocation: 100,
         expectedApy: bestLend.apy,
         riskLevel: bestLend.riskLevel,
-        reasoning: `100% to Bonzo Lend — ${bestLend.tokenPair} at ${bestLend.apy.toFixed(2)}% supply APY. Auto-deposited via your wallet.`,
+        reasoning: `100% to Bonzo Lend — ${bestLend.tokenPair} at ${bestLend.apy.toFixed(2)}% supply APY.`,
         productType: 'bonzo-lend',
       });
-    } else if (bestSingleVault) {
-      vaultStrategies.push({
-        vaultAddress: bestSingleVault.vaultAddress,
-        assetEvmAddress: bestSingleVault.vaultAddress,
-        symbol: bestSingleVault.depositToken,
-        decimals: bestSingleVault.depositDecimals,
-        vaultName: bestSingleVault.name,
-        allocation: 100,
-        expectedApy: bestSingleVault.apy,
-        riskLevel: bestSingleVault.riskLevel,
-        reasoning: `100% to Bonzo Vault — ${bestSingleVault.depositToken} at ${bestSingleVault.apy.toFixed(1)}% APY.`,
-        productType: 'bonzo-vault',
-        vaultType: bestSingleVault.type,
-      });
+
+      // Show dual-asset vault as higher-APY opportunity
+      if (bestDualVault && bestDualVault.apy > bestLend.apy * 3) {
+        const tokens = bestDualVault.depositToken.split('-');
+        const pairedToken = tokens.find((t) =>
+          !matchTokens.some((m) => t.toUpperCase().includes(m))
+        ) || bestDualVault.pairedToken || tokens[1];
+
+        vaultStrategies.push({
+          vaultAddress: bestDualVault.vaultAddress,
+          assetEvmAddress: bestDualVault.vaultAddress,
+          symbol: bestDualVault.depositToken,
+          decimals: bestDualVault.depositDecimals,
+          vaultName: bestDualVault.name,
+          allocation: 0, // Informational — requires both tokens for HBAR
+          expectedApy: bestDualVault.apy,
+          riskLevel: bestDualVault.riskLevel,
+          reasoning: `Higher yield: ${bestDualVault.apy.toFixed(1)}% APY — requires both ${intent.tokenSymbol} and ${pairedToken}.`,
+          productType: 'bonzo-vault',
+          vaultType: bestDualVault.type,
+          dualTokenHint: {
+            pairedToken,
+            suggestedSplit: `Try: "I want yield on 5 ${intent.tokenSymbol} and 5 ${pairedToken}"`,
+          },
+        } as VaultStrategy);
+      }
     }
 
-    // ── Dual-asset vault recommendations (allocation=0, not auto-deposited) ──
-    // These are shown as higher-APY yield opportunities with a link to Bonzo Vaults UI
-    for (const dv of dualAssetVaults.slice(0, 2)) {
-      vaultStrategies.push({
-        vaultAddress: dv.vaultAddress,
-        assetEvmAddress: dv.vaultAddress,
-        symbol: dv.depositToken,
-        decimals: dv.depositDecimals,
-        vaultName: dv.name,
-        allocation: 0, // recommendation only — requires both tokens
-        expectedApy: dv.apy,
-        riskLevel: dv.riskLevel,
-        reasoning: `Bonzo Vault — ${dv.depositToken}${dv.pairedToken ? '/' + dv.pairedToken : ''} at ${dv.apy.toFixed(1)}% APY. Requires both tokens. Deposit at app.bonzo.finance/vaults.`,
-        productType: 'bonzo-vault',
-        vaultType: dv.type,
-      });
-    }
-
-    // Calculate blended APY (only from executable allocations)
+    // Calculate blended APY
     const totalApy = vaultStrategies.reduce(
       (sum, v) => sum + (v.expectedApy * v.allocation / 100), 0
     );
@@ -303,13 +347,7 @@ export class StrategistAgent extends BaseAgent {
         'BONZO': { address: '0x000000000000000000000000000000000083cef0', decimals: 8 },
       };
 
-      // Known vault contract IDs
-      const VAULT_IDS: Record<string, string> = {
-        '0x724F19f52A3E0e9D2881587C997db93f9613B2C7': '0.0.10164469',  // USDC-HBAR
-        '0xcfba07324bd207C3ED41416a9a36f8184F9a2134': '0.0.10164550',  // BONZO-XBONZO
-        '0x8AEE31dFF6264074a1a3929432070E1605F6b783': '0.0.10164569',  // SAUCE-XSAUCE
-        '0x0171baa37fC9f56c98bD56FEB32bC28342944C6e': '0.0.10164765',  // USDC-SAUCE
-      };
+      // Use module-level KNOWN_VAULT_IDS for contract ID lookup
 
       const a0 = ASSET_INFO[asset0Symbol.toUpperCase()] || { address: '', decimals: 8 };
       const a1 = ASSET_INFO[asset1Symbol.toUpperCase()] || { address: '', decimals: 8 };
@@ -336,7 +374,7 @@ export class StrategistAgent extends BaseAgent {
           token1Decimals: a1.decimals,
           token1Amount,
           depositSelector: '0x00aeef8a',
-          vaultContractId: VAULT_IDS[matchingVault.vaultAddress] || '',
+          vaultContractId: KNOWN_VAULT_IDS[matchingVault.vaultAddress] || '',
         },
       });
     } else {
@@ -383,6 +421,26 @@ export class StrategistAgent extends BaseAgent {
       case 'moderate':     return { lendPct: 40, vaultPct: 60 };
       case 'aggressive':   return { lendPct: 20, vaultPct: 80 };
       default:             return { lendPct: 50, vaultPct: 50 };
+    }
+  }
+
+  /**
+   * Fetch current HBAR price in USD from CoinGecko.
+   * Used to calculate the proportional HBAR amount for dual-token vault deposits.
+   */
+  private async getHbarPrice(): Promise<number> {
+    try {
+      const res = await fetch(
+        'https://api.coingecko.com/api/v3/simple/price?ids=hedera-hashgraph&vs_currencies=usd'
+      );
+      if (!res.ok) throw new Error(`CoinGecko ${res.status}`);
+      const data = await res.json() as { 'hedera-hashgraph'?: { usd?: number } };
+      const price = data['hedera-hashgraph']?.usd || 0;
+      if (price > 0) console.log(`[Strategist] HBAR price: $${price}`);
+      return price;
+    } catch {
+      console.log('[Strategist] CoinGecko unavailable, using fallback HBAR price $0.19');
+      return 0.19; // Reasonable fallback
     }
   }
 

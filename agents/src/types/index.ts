@@ -96,6 +96,10 @@ export interface BonzoVaultInfo {
   lastHarvest?: string;
   /** Safety score from Bonzo API (0-10) */
   safetyScore?: number;
+  /** Token0 EVM address (for dual-asset vault deposits) */
+  token0Address?: string;
+  /** Token1 EVM address (for dual-asset vault deposits) */
+  token1Address?: string;
 }
 
 export interface VaultStrategy {

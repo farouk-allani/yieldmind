@@ -4,19 +4,26 @@ const BASE = '';
 
 export async function sendChatMessage(
   message: string,
-  sessionId: string
+  sessionId: string,
+  options?: { autonomous?: boolean }
 ): Promise<ChatResponse> {
   const res = await fetch(`${BASE}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, sessionId }),
+    body: JSON.stringify({
+      message,
+      sessionId,
+      autonomous: options?.autonomous || false,
+    }),
   });
 
+  const data = await res.json();
+
   if (!res.ok) {
-    throw new Error(`Chat request failed: ${res.status}`);
+    throw new Error(data.error || `Chat request failed: ${res.status}`);
   }
 
-  return res.json();
+  return data;
 }
 
 export async function executeStrategy(
