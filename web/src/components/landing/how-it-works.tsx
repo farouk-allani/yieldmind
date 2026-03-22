@@ -17,7 +17,7 @@ const steps = [
     color: '#3B82F6',
     title: 'Agents Strategize',
     description:
-      'Four specialized AI agents — Scout, Strategist, Executor, Sentinel — collaborate to find the optimal Bonzo Vault strategy for your risk profile.',
+      'Four specialized AI agents — Scout, Strategist, Executor, Sentinel — collaborate to find the optimal Bonzo Lend or Vault strategy for your risk profile and token.',
   },
   {
     number: '03',
@@ -25,7 +25,7 @@ const steps = [
     color: '#F59E0B',
     title: 'Execute & Monitor',
     description:
-      'Your strategy executes on-chain via Hedera. Every agent decision is logged to Hedera Consensus Service. Transparent, auditable, autonomous.',
+      'The Keeper agent autonomously deposits and harvests via Hedera Agent Kit. An intelligent keeper loop analyzes volatility and sentiment to optimize timing. Every decision is logged to HCS.',
   },
 ];
 

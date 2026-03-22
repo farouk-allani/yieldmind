@@ -52,7 +52,7 @@ export function Navbar() {
             Agents
           </Link>
           <a
-            href="https://github.com"
+            href="https://github.com/farouk-allani/yieldmind"
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-text-secondary hover:text-text-primary transition-colors hidden sm:block"

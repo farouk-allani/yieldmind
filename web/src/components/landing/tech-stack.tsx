@@ -4,6 +4,8 @@ import {
   Coins,
   Link2,
   Triangle,
+  Bot,
+  Cpu,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -14,9 +16,10 @@ type TechItem =
 const techs: TechItem[] = [
   { name: 'Hedera', image: '/hbar.webp', description: 'Blockchain' },
   { name: 'Bonzo Finance', image: '/bonzo.webp', description: 'DeFi Vaults' },
-  { name: 'HCS', icon: MessageSquareText, description: 'Consensus' },
-  { name: 'HTS', icon: Coins, description: 'Token Service' },
+  { name: 'Hedera Agent Kit', icon: Bot, description: 'Autonomous Execution' },
+  { name: 'HCS', icon: MessageSquareText, description: 'Consensus Logging' },
   { name: 'LangChain', icon: Link2, description: 'AI Framework' },
+  { name: 'Vercel AI SDK', icon: Cpu, description: 'Streaming Chat' },
 ];
 
 export function TechStack() {

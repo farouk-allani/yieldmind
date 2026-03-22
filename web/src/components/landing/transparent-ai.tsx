@@ -11,7 +11,7 @@ const logEntries = [
     time: '2:34 PM',
     action: 'vault-scan-complete',
     reasoning:
-      'Scanned 5 Bonzo Vaults. Best match for conservative risk: HBAR-USDC Stable Yield at 8.5% APY. Score: 0.87/1.0',
+      'Scanned Bonzo Lend pools + 4 Bonzo Vaults. HBAR Supply Pool: 0.68% APY, $8.2M liquidity. HBAR-USDC SaucerSwap V2 Vault: 43.7% APY (aggressive).',
     confidence: 0.87,
   },
   {
@@ -21,7 +21,7 @@ const logEntries = [
     time: '2:34 PM',
     action: 'strategy-proposed',
     reasoning:
-      'Proposed 2-vault strategy: HBAR-USDC (70%), USDC-USDT (30%). Blended APY: 6.2%. Risk: conservative.',
+      'User intent: safe yield on HBAR. Allocating 100% to HBAR Supply Pool (Bonzo Lend) at 0.68% APY. Conservative risk — single-token, no impermanent loss.',
     confidence: 0.92,
   },
   {
@@ -29,8 +29,8 @@ const logEntries = [
     icon: '/execute.png',
     color: '#F59E0B',
     time: '2:35 PM',
-    action: 'deposit-confirmed',
-    reasoning: 'Deposited into 2 vaults. Tx: 0.0.1234@1709142938',
+    action: 'deposit-executed',
+    reasoning: 'Deposited 10 HBAR into Bonzo Lend via WETHGateway. Autonomous execution via Hedera Agent Kit.',
     confidence: 1.0,
     link: true,
   },

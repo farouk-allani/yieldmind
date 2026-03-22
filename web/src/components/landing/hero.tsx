@@ -81,12 +81,13 @@ export function Hero() {
         {/* Subheadline */}
         <p className="text-base sm:text-lg text-text-secondary max-w-2xl leading-relaxed">
           Tell YieldMind what you want in plain English. Our AI agents find the
-          best Bonzo Vault strategy, execute on-chain, and manage your
-          position — with every decision transparently logged on Hedera.
+          best Bonzo strategy, execute deposits and harvests autonomously via
+          Hedera Agent Kit, and manage your position — with every decision
+          transparently logged on Hedera Consensus Service.
         </p>
 
         {/* Feature pills */}
-        {/* <div className="flex flex-wrap items-center justify-center gap-3 mt-1">
+        <div className="flex flex-wrap items-center justify-center gap-3 mt-1">
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-surface border border-border-subtle text-[12px] text-text-secondary">
             <Shield className="w-3 h-3 text-supply" />
             On-Chain Transparency
@@ -99,7 +100,7 @@ export function Hero() {
             <Eye className="w-3 h-3 text-accent" />
             24/7 Monitoring
           </div>
-        </div> */}
+        </div>
 
         {/* Buttons */}
         <div className="flex flex-col sm:flex-row items-center gap-3 mt-3">
@@ -111,7 +112,7 @@ export function Hero() {
             <ArrowRight className="w-4 h-4" />
           </Link>
           <a
-            href="https://github.com"
+            href="https://github.com/farouk-allani/yieldmind"
             target="_blank"
             rel="noopener noreferrer"
             className="h-12 px-7 rounded-[8px] border border-border-subtle text-sm font-medium text-text-primary flex items-center hover:bg-card transition-colors"

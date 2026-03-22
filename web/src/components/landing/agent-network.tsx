@@ -10,8 +10,8 @@ const agents = [
     color: '#10B981',
     role: 'Discovery & Analysis',
     bullets: [
-      'Scans all Bonzo Vaults in real-time',
-      'Evaluates APY, risk, liquidity depth',
+      'Scans Bonzo Lend pools and Vaults live',
+      'Evaluates APY, TVL, liquidity, and risk',
       'Scores opportunities for your risk profile',
     ],
   },
@@ -34,9 +34,9 @@ const agents = [
     color: '#F59E0B',
     role: 'On-Chain Execution',
     bullets: [
-      'Deposits into Bonzo Vaults via Hedera',
-      'Harvests and compounds rewards',
-      'Rebalances positions as needed',
+      'Deposits into Bonzo Lend & Vaults on mainnet',
+      'Autonomous harvests via Hedera Agent Kit',
+      'Intelligent keeper loop with volatility-based timing',
     ],
   },
   {
@@ -46,9 +46,9 @@ const agents = [
     color: '#EF4444',
     role: 'Monitoring & Protection',
     bullets: [
-      'Watches market conditions 24/7',
-      'Triggers alerts on volatility spikes',
-      'Initiates emergency exits when needed',
+      'Watches market conditions and price feeds',
+      'Analyzes volatility and sentiment data',
+      'Triggers alerts when thresholds are breached',
     ],
   },
 ];

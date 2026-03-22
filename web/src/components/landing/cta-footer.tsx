@@ -29,9 +29,9 @@ export function CTA() {
           <ArrowRight className="w-4 h-4" />
         </Link>
         <p className="text-[13px] text-text-muted mt-2">
-          Open source · MIT License ·{' '}
+          Open source ·{' '}
           <a
-            href="https://github.com"
+            href="https://github.com/farouk-allani/yieldmind"
             target="_blank"
             rel="noopener noreferrer"
             className="text-text-secondary hover:text-text-primary transition-colors"
@@ -63,8 +63,8 @@ export function Footer() {
         </div>
         <div className="flex items-center gap-6">
           {[
-            { label: 'GitHub', href: 'https://github.com' },
-            { label: 'Docs', href: '#' },
+            { label: 'GitHub', href: 'https://github.com/farouk-allani/yieldmind' },
+            { label: 'Bonzo Docs', href: 'https://docs.bonzo.finance' },
             { label: 'Hedera', href: 'https://hedera.com', image: '/hbar.webp' },
             { label: 'Bonzo', href: 'https://bonzo.finance', image: '/bonzo.webp' },
           ].map((link) => (
