@@ -80,6 +80,19 @@ export class AgentCoordinator {
     return topicId;
   }
 
+  /** Get the HCS topic ID for a session */
+  getSessionTopicId(sessionId: string): string | undefined {
+    return this.sessions.get(sessionId);
+  }
+
+  /** Get all active sessions and their topic IDs */
+  getAllSessions(): Array<{ sessionId: string; topicId: string }> {
+    return [...this.sessions.entries()].map(([sessionId, topicId]) => ({
+      sessionId,
+      topicId,
+    }));
+  }
+
   private setAgentTopics(topicId: string) {
     this.scout.setTopic(topicId);
     this.strategist.setTopic(topicId);
@@ -293,6 +306,9 @@ export class AgentCoordinator {
     const executable = strategy.vaults.filter(
       (v: { allocation: number }) => v.allocation > 0
     );
+    const opportunities = strategy.vaults.filter(
+      (v: { allocation: number }) => v.allocation === 0
+    );
     const execSummaries = executable
       .map(
         (v: { vaultName: string; allocation: number; expectedApy: number; riskLevel: string }) =>
@@ -310,6 +326,19 @@ export class AgentCoordinator {
       '',
       `Overall expected APY: ~${strategy.totalExpectedApy.toFixed(1)}%`,
       `Risk level: ${strategy.overallRisk}`,
+    );
+
+    // Alert user if their intent didn't match what we can deliver
+    const requestedRisk = strategy.userIntent.riskTolerance;
+    if (requestedRisk !== strategy.overallRisk && opportunities.length > 0) {
+      const bestOpp = opportunities[0];
+      lines.push(
+        '',
+        `**Note:** You requested ${requestedRisk} yield, but with only ${strategy.userIntent.tokenSymbol}, the best executable option is Bonzo Lend at ${strategy.totalExpectedApy.toFixed(1)}% APY. For ${requestedRisk} returns (up to ${bestOpp.expectedApy.toFixed(1)}% APY), provide a second token to access Bonzo Vaults — see the opportunities below.`,
+      );
+    }
+
+    lines.push(
       '',
       `**Agent reasoning:** ${decision.reasoning}`,
       '',

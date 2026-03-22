@@ -6,14 +6,20 @@ import type { DecisionLog, AgentRole } from '@/lib/types';
 
 interface DecisionLogPanelProps {
   decisions: DecisionLog[];
+  hcsTopicId?: string | null;
 }
 
-const ROLE_CONFIG: Record<AgentRole, { label: string; icon: string; text: string; bg: string }> = {
+const ROLE_CONFIG: Record<string, { label: string; icon: string; text: string; bg: string }> = {
   scout: { label: 'SCT', icon: '/scout.png', text: 'text-supply', bg: 'bg-badge-supply' },
   strategist: { label: 'STR', icon: '/strategist.png', text: 'text-accent', bg: 'bg-badge-accent' },
   executor: { label: 'EXE', icon: '/execute.png', text: 'text-borrow', bg: 'bg-badge-borrow' },
   sentinel: { label: 'SNT', icon: '/sentinel.png', text: 'text-danger', bg: 'bg-badge-danger' },
 };
+
+/** Detect keeper decisions (agentId === 'keeper') for special badging */
+function isKeeperDecision(decision: DecisionLog): boolean {
+  return decision.agentId === 'keeper' || decision.action.startsWith('keeper:');
+}
 
 function getConfidenceColor(confidence: number): string {
   if (confidence >= 0.7) return 'text-supply';
@@ -34,7 +40,7 @@ function getHashScanUrl(data: Record<string, unknown>): string | null {
   return null;
 }
 
-export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
+export function DecisionLogPanel({ decisions, hcsTopicId }: DecisionLogPanelProps) {
   const sortedDecisions = [...decisions].sort(
     (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   );
@@ -50,9 +56,19 @@ export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
             {decisions.length} logged
           </span>
         </div>
-        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-[8px] bg-surface">
-          <div className="w-1 h-1 rounded-full bg-supply animate-pulse" />
-          <span className="text-[10px] text-text-muted">On-Chain</span>
+        <div className="flex items-center gap-2">
+          {hcsTopicId && (
+            <a
+              href={`/hcs`}
+              className="text-[10px] text-accent hover:text-accent/80 transition-colors"
+            >
+              View Trail
+            </a>
+          )}
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-[8px] bg-surface">
+            <div className="w-1 h-1 rounded-full bg-supply animate-pulse" />
+            <span className="text-[10px] text-text-muted">On-Chain</span>
+          </div>
         </div>
       </div>
 
@@ -64,9 +80,10 @@ export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
             </p>
           ) : (
             sortedDecisions.map((decision, i) => {
-              const config = ROLE_CONFIG[decision.agentRole];
+              const config = ROLE_CONFIG[decision.agentRole] || ROLE_CONFIG.sentinel;
               const dataSource = getDataSourceLabel(decision.data);
               const hashscanUrl = getHashScanUrl(decision.data);
+              const isKeeper = isKeeperDecision(decision);
 
               return (
                 <motion.div
@@ -92,6 +109,11 @@ export function DecisionLogPanel({ decisions }: DecisionLogPanelProps) {
                     <span className="text-[11px] text-text-secondary">
                       {decision.action}
                     </span>
+                    {isKeeper && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-[4px] bg-points/10 text-points font-medium">
+                        Keeper
+                      </span>
+                    )}
                     {decision.data?.mode === 'autonomous' && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-[4px] bg-accent/10 text-accent font-medium">
                         Agent Kit

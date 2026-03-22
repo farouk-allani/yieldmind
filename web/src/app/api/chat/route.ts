@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { streamText } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { agentRuntime, parseIntent, getRuntimeError } from '@/lib/runtime';
+import { saveSessionTopicId } from '@/lib/supabase';
 
 /**
  * POST /api/chat
@@ -218,16 +219,25 @@ export async function POST(request: Request) {
           }
         }
 
+        // Persist HCS topic for enhanced mode too
+        const enhancedTopicId = agentRuntime.coordinator.getSessionTopicId(sid);
+        if (enhancedTopicId) {
+          saveSessionTopicId(sid, enhancedTopicId).catch((err) =>
+            console.warn('[API /chat] Failed to persist HCS topic:', err)
+          );
+        }
+
         if (insights.length > 0) {
           const analysis = '\n\n**Agent Kit Market Analysis:**\n' + insights.join('\n');
           return NextResponse.json({
             ...standardResponse,
             message: standardResponse.message + analysis,
             mode: 'enhanced',
+            hcsTopicId: enhancedTopicId,
           });
         }
 
-        return NextResponse.json(standardResponse);
+        return NextResponse.json({ ...standardResponse, hcsTopicId: enhancedTopicId });
       } catch {
         console.log('[API /chat] Enhanced analysis failed, using standard pipeline...');
       }
@@ -236,7 +246,20 @@ export async function POST(request: Request) {
     // ── Standard mode: Scout → Strategist → user approves & signs ──
     const response = await agentRuntime.coordinator.processIntent(intent);
 
-    return NextResponse.json(response);
+    // Include the HCS topic ID so frontend can link to the decision trail
+    const hcsTopicId = agentRuntime.coordinator.getSessionTopicId(sid);
+
+    // Persist HCS topic ID to Supabase so it survives server restarts
+    if (hcsTopicId) {
+      saveSessionTopicId(sid, hcsTopicId).catch((err) =>
+        console.warn('[API /chat] Failed to persist HCS topic:', err)
+      );
+    }
+
+    return NextResponse.json({
+      ...response,
+      hcsTopicId,
+    });
   } catch (error) {
     console.error('[API /chat] Error:', error);
     return NextResponse.json(

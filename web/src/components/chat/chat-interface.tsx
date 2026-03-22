@@ -16,12 +16,14 @@ interface ChatInterfaceProps {
   onAgentUpdate?: (agentStates: ChatMessage['agentStates']) => void;
   onDecisionsUpdate?: (decisions: ChatMessage['decisions']) => void;
   onStrategyUpdate?: (strategy: Strategy | undefined) => void;
+  onHcsTopicUpdate?: (topicId: string | undefined) => void;
 }
 
 export function ChatInterface({
   onAgentUpdate,
   onDecisionsUpdate,
   onStrategyUpdate,
+  onHcsTopicUpdate,
 }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -382,6 +384,7 @@ export function ChatInterface({
       if (response.agentStates) onAgentUpdate?.(response.agentStates);
       if (response.decisions) onDecisionsUpdate?.(response.decisions);
       if (response.strategy) onStrategyUpdate?.(response.strategy);
+      if (response.hcsTopicId) onHcsTopicUpdate?.(response.hcsTopicId);
     } catch (error) {
       const errorMessage: ChatMessage = {
         id: `error-${Date.now()}`,

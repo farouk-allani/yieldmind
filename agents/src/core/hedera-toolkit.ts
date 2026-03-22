@@ -221,9 +221,17 @@ export function createHederaToolkit(
     func: async (input: { strategyAddress: string; vaultName: string; reasoning: string }) => {
       const { strategyAddress, vaultName, reasoning } = input;
       try {
-        const rpcUrl = 'https://mainnet.hashio.io/api';
+        // Get agent's EVM address for the call fee recipient
+        const agentEvmAddress = await getOperatorEvmAddress(config.mainnetAccountId);
 
-        // First simulate via eth_call
+        // harvest(address callerAddress) — selector 0x0e5c011e
+        // The caller receives a small callFee as incentive for triggering the harvest.
+        // This is the standard Beefy-style keeper pattern used by Bonzo Vaults.
+        const paddedCaller = agentEvmAddress.replace('0x', '').toLowerCase().padStart(64, '0');
+        const harvestCalldata = '0x0e5c011e' + paddedCaller;
+
+        // Pre-flight check: eth_call to verify rewards are ready before spending gas
+        const rpcUrl = 'https://mainnet.hashio.io/api';
         const simResponse = await fetch(rpcUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -232,7 +240,7 @@ export function createHederaToolkit(
             id: 1,
             method: 'eth_call',
             params: [
-              { to: strategyAddress, data: '0x4641257d' },
+              { to: strategyAddress, data: harvestCalldata, from: agentEvmAddress },
               'latest',
             ],
           }),
@@ -240,47 +248,63 @@ export function createHederaToolkit(
 
         const simResult = (await simResponse.json()) as {
           result?: string;
-          error?: { message?: string };
+          error?: { message?: string; data?: string };
         };
 
         if (simResult.error) {
+          // Check for "IMF" = Insufficient Management Fee (not enough rewards yet)
+          const errData = simResult.error.data || simResult.error.message || '';
+          const isIMF = errData.includes('494d46') || errData.includes('IMF');
+
+          if (isIMF) {
+            return JSON.stringify({
+              success: false,
+              reason: 'insufficient_rewards',
+              vault: vaultName,
+              strategy: strategyAddress,
+              reasoning,
+              message: `Harvest decision made for "${vaultName}" but insufficient rewards accumulated since last harvest. ` +
+                `The keeper will retry when enough fees have accrued. Decision: ${reasoning}`,
+            });
+          }
+
           return JSON.stringify({
             success: false,
-            simulated: true,
+            reason: 'preflight_failed',
             vault: vaultName,
             strategy: strategyAddress,
             reasoning,
-            message: `Harvest simulation for "${vaultName}" — strategy contract at ${strategyAddress}. ` +
-              `harvest() is restricted to authorized keepers. ` +
-              `Decision logged: ${reasoning}`,
-            note: 'The agent made an intelligent data-driven harvest decision. Execution requires keeper authorization.',
+            error: simResult.error.message,
+            message: `Harvest pre-flight failed for "${vaultName}": ${simResult.error.message}. Decision logged: ${reasoning}`,
           });
         }
 
-        // If simulation succeeds, attempt real execution via Hedera SDK
+        // Pre-flight passed — rewards are ready! Execute real harvest on-chain via Hedera SDK
         try {
           const txResult = await executeHarvestViaHederaSDK(
             mainnetClient,
-            strategyAddress
+            strategyAddress,
+            agentEvmAddress
           );
           return JSON.stringify({
             success: true,
-            simulated: false,
             vault: vaultName,
             strategy: strategyAddress,
             reasoning,
             txHash: txResult.txHash,
             hashscanUrl: txResult.hashscanUrl,
-            message: `Successfully harvested vault "${vaultName}". Rewards compounded. ${reasoning}`,
+            callFeeRecipient: agentEvmAddress,
+            message: `Successfully harvested vault "${vaultName}". Rewards compounded for all depositors. ${reasoning}`,
           });
-        } catch {
+        } catch (execErr) {
           return JSON.stringify({
             success: false,
-            simulated: true,
+            reason: 'execution_failed',
             vault: vaultName,
             strategy: strategyAddress,
             reasoning,
-            message: `Harvest simulation succeeded but on-chain execution failed. Decision logged: ${reasoning}`,
+            error: execErr instanceof Error ? execErr.message : String(execErr),
+            message: `Harvest pre-flight passed but on-chain execution failed for "${vaultName}". Decision logged: ${reasoning}`,
           });
         }
       } catch (error) {
@@ -537,14 +561,14 @@ async function executeDepositViaHederaSDK(
 
 async function executeHarvestViaHederaSDK(
   client: Client,
-  strategyAddress: string
+  strategyAddress: string,
+  callerEvmAddress: string
 ): Promise<{ txHash: string; hashscanUrl: string }> {
   const { ContractExecuteTransaction, ContractId } = await import(
     '@hashgraph/sdk'
   );
 
   // Resolve strategy EVM address to Hedera contract ID
-  // Includes ALL Bonzo strategy contracts (single-asset + dual-asset + LST)
   const STRATEGY_CONTRACT_IDS: Record<string, string> = {
     // Dual-asset DEX strategies (from Bonzo Vaults API)
     '0x157EB9ba35d70560D44394206D4a03885C33c6d5': '0.0.10164472',  // USDC-HBAR
@@ -570,7 +594,6 @@ async function executeHarvestViaHederaSDK(
 
   let contractId = STRATEGY_CONTRACT_IDS[strategyAddress];
   if (!contractId) {
-    // Try Mirror Node lookup
     try {
       const res = await fetch(`https://mainnet.mirrornode.hedera.com/api/v1/contracts/${strategyAddress}`);
       if (res.ok) {
@@ -583,12 +606,14 @@ async function executeHarvestViaHederaSDK(
     }
   }
 
-  // harvest() selector: 0x4641257d
-  const functionParams = Buffer.from('4641257d', 'hex');
+  // harvest(address callerAddress) — selector 0x0e5c011e
+  // Bonzo's own keeper uses this selector. The caller receives a callFee as incentive.
+  const paddedCaller = callerEvmAddress.replace('0x', '').toLowerCase().padStart(64, '0');
+  const functionParams = Buffer.from('0e5c011e' + paddedCaller, 'hex');
 
   const tx = new ContractExecuteTransaction()
     .setContractId(ContractId.fromString(contractId))
-    .setGas(500_000)
+    .setGas(1_500_000) // Bonzo harvests use ~1M gas
     .setFunctionParameters(functionParams);
 
   const response = await tx.execute(client);
@@ -598,6 +623,8 @@ async function executeHarvestViaHederaSDK(
   if (receipt.status.toString() !== 'SUCCESS') {
     throw new Error(`Harvest transaction failed: ${receipt.status}`);
   }
+
+  console.log(`[HederaToolkit] Harvest SUCCESS on ${contractId} — tx: ${txId}`);
 
   return {
     txHash: txId,

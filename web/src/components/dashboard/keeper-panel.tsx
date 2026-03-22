@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Activity, Play, Square, RefreshCw, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import Link from 'next/link';
+import { Activity, Play, Square, RefreshCw, TrendingUp, TrendingDown, Minus, ExternalLink, Maximize2 } from 'lucide-react';
 
 interface KeeperLoopState {
   available: boolean;
@@ -17,6 +18,8 @@ interface KeeperLoopState {
     reasoning: string;
     timestamp: string;
   }>;
+  hcsTopicId?: string | null;
+  hcsHashscanUrl?: string | null;
   message?: string;
 }
 
@@ -93,6 +96,9 @@ export function KeeperPanel() {
   }
 
   const actionIcon = (action: string) => {
+    if (action.includes('harvest-executed')) return <TrendingUp className="w-3 h-3 text-supply" />;
+    if (action.includes('harvest-attempted')) return <RefreshCw className="w-3 h-3 text-points" />;
+    if (action.includes('harvest-failed') || action.includes('harvest-error')) return <TrendingDown className="w-3 h-3 text-danger" />;
     if (action.includes('harvest-now')) return <TrendingDown className="w-3 h-3 text-borrow" />;
     if (action.includes('harvest-delay')) return <TrendingUp className="w-3 h-3 text-supply" />;
     return <Minus className="w-3 h-3 text-text-muted" />;
@@ -168,6 +174,28 @@ export function KeeperPanel() {
           <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
           Analyze Now
         </button>
+      </div>
+
+      {/* HCS Topic + Full Page Link */}
+      <div className="flex items-center gap-2 mb-3">
+        {state.hcsTopicId && (
+          <a
+            href={state.hcsHashscanUrl || '#'}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition-colors"
+          >
+            <ExternalLink className="w-3 h-3" />
+            HCS: {state.hcsTopicId}
+          </a>
+        )}
+        <Link
+          href="/app/keeper"
+          className="flex items-center gap-1 text-[10px] text-text-muted hover:text-text-secondary transition-colors ml-auto"
+        >
+          <Maximize2 className="w-3 h-3" />
+          Full View
+        </Link>
       </div>
 
       {/* Next Run */}

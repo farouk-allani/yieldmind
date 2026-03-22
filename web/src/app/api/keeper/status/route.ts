@@ -30,9 +30,18 @@ export async function GET() {
     });
   }
 
+  const loopState = keeperLoop.getState();
+  const hcsTopicId = loopState.hcsTopicId || process.env.HCS_GLOBAL_TOPIC_ID || null;
+  const network = process.env.HEDERA_NETWORK || 'testnet';
+
   return NextResponse.json({
     available: true,
-    ...keeperLoop.getState(),
+    ...loopState,
+    hcsTopicId,
+    hcsHashscanUrl: hcsTopicId
+      ? `https://hashscan.io/${network}/topic/${hcsTopicId}`
+      : null,
+    agentAccountId: process.env.HEDERA_MAINNET_ACCOUNT_ID || null,
   });
 }
 

@@ -6,9 +6,14 @@ create table if not exists chat_sessions (
   id uuid default gen_random_uuid() primary key,
   wallet_address text not null,
   title text not null default 'New conversation',
+  hcs_topic_id text default null,
   created_at timestamptz default now() not null,
   updated_at timestamptz default now() not null
 );
+
+-- Migration: add hcs_topic_id to existing chat_sessions table
+-- (run this if table already exists)
+-- ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS hcs_topic_id text default null;
 
 -- Chat messages table
 create table if not exists chat_messages (

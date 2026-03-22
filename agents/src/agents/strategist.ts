@@ -171,14 +171,9 @@ export class StrategistAgent extends BaseAgent {
     // ── Executable allocations ──
     // Bonzo Vaults use deposit(uint256 _amount0, uint256 _amount1, uint256 _minShares)
     // with selector 0x00aeef8a. Single-sided deposits REVERT — both tokens required.
-    //
-    // Strategy for single-token users:
-    // - If user has USDC: split between Lend (stable) + Vault (auto-calc HBAR side)
-    // - If user has HBAR: 100% Lend (vault requires USDC as token0 > 0)
     const bestDualVault = dualAssetVaults[0] || null;
 
     // For USDC users: auto-calculate the HBAR needed for the vault side
-    // The vault requires both tokens in the correct ratio (based on current price)
     const canDualDeposit = bestDualVault && userToken === 'USDC';
 
     if (bestLend && bestDualVault && canDualDeposit) {
@@ -240,8 +235,8 @@ export class StrategistAgent extends BaseAgent {
         },
       } as VaultStrategy);
     } else if (bestLend) {
-      // Can't do single-sided vault deposit (e.g., HBAR-only into USDC-HBAR)
-      // 100% to Bonzo Lend, show vault as opportunity
+      // Single-token user (e.g., HBAR-only) — can't do single-sided vault deposit
+      // 100% to Bonzo Lend as the executable strategy
       vaultStrategies.push({
         vaultAddress: bestLend.address,
         assetEvmAddress: bestLend.evmAddress,
@@ -255,37 +250,48 @@ export class StrategistAgent extends BaseAgent {
         productType: 'bonzo-lend',
       });
 
-      // Show dual-asset vault as higher-APY opportunity
-      if (bestDualVault && bestDualVault.apy > bestLend.apy * 3) {
-        const tokens = bestDualVault.depositToken.split('-');
+      // Show top dual-asset vaults as higher-APY opportunities (up to 3)
+      // Sorted by APY descending, pick vaults relevant to the user's risk tolerance
+      const topDualVaults = dualAssetVaults
+        .filter((v) => v.apy > bestLend.apy * 3)
+        .slice(0, intent.riskTolerance === 'aggressive' ? 3 : 2);
+
+      for (const dv of topDualVaults) {
+        const tokens = dv.depositToken.split('-');
         const pairedToken = tokens.find((t) =>
           !matchTokens.some((m) => t.toUpperCase().includes(m))
-        ) || bestDualVault.pairedToken || tokens[1];
+        ) || dv.pairedToken || tokens[1];
 
         vaultStrategies.push({
-          vaultAddress: bestDualVault.vaultAddress,
-          assetEvmAddress: bestDualVault.vaultAddress,
-          symbol: bestDualVault.depositToken,
-          decimals: bestDualVault.depositDecimals,
-          vaultName: bestDualVault.name,
-          allocation: 0, // Informational — requires both tokens for HBAR
-          expectedApy: bestDualVault.apy,
-          riskLevel: bestDualVault.riskLevel,
-          reasoning: `Higher yield: ${bestDualVault.apy.toFixed(1)}% APY — requires both ${intent.tokenSymbol} and ${pairedToken}.`,
+          vaultAddress: dv.vaultAddress,
+          assetEvmAddress: dv.vaultAddress,
+          symbol: dv.depositToken,
+          decimals: dv.depositDecimals,
+          vaultName: dv.name,
+          allocation: 0, // Requires both tokens
+          expectedApy: dv.apy,
+          riskLevel: dv.riskLevel,
+          reasoning: `${dv.apy.toFixed(1)}% APY — requires both ${intent.tokenSymbol} and ${pairedToken}. Auto-compounding concentrated liquidity vault.`,
           productType: 'bonzo-vault',
-          vaultType: bestDualVault.type,
+          vaultType: dv.type,
           dualTokenHint: {
             pairedToken,
-            suggestedSplit: `Try: "I want yield on 5 ${intent.tokenSymbol} and 5 ${pairedToken}"`,
+            suggestedSplit: `Try: "I want yield on ${Math.ceil(intent.targetAmount / 2)} ${intent.tokenSymbol} and ${Math.ceil(intent.targetAmount / 2)} ${pairedToken}"`,
           },
         } as VaultStrategy);
       }
     }
 
-    // Calculate blended APY
+    // Calculate blended APY (only from allocated vaults)
     const totalApy = vaultStrategies.reduce(
       (sum, v) => sum + (v.expectedApy * v.allocation / 100), 0
     );
+
+    // Set overallRisk to reflect what's actually being delivered
+    // If the best executable option is just Lend at <2% APY, it's conservative regardless of intent
+    const actualRisk = totalApy < 2 && intent.riskTolerance !== 'conservative'
+      ? 'conservative' as const
+      : intent.riskTolerance;
 
     return {
       id: `strategy-${Date.now()}`,
@@ -293,7 +299,7 @@ export class StrategistAgent extends BaseAgent {
       userIntent: intent,
       vaults: vaultStrategies,
       totalExpectedApy: totalApy,
-      overallRisk: intent.riskTolerance,
+      overallRisk: actualRisk,
       createdAt: new Date().toISOString(),
       status: 'proposed',
     };

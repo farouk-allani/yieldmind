@@ -34,6 +34,7 @@ export function PositionPanel({ activeStrategy }: PositionPanelProps) {
   }
 
   const hasPositions = bonzo.positions.length > 0;
+  const hasVaultPositions = bonzo.vaultPositions.length > 0;
 
   return (
     <div>
@@ -116,6 +117,44 @@ export function PositionPanel({ activeStrategy }: PositionPanelProps) {
                   {bonzo.isLoading ? '...' : '$0.00'}
                 </div>
               </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Bonzo Vault positions */}
+        {hasVaultPositions && (
+          <motion.div
+            initial={{ opacity: 0, x: 12 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.05 }}
+            className="glass-card px-3 py-3"
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <div className="rounded-full bg-badge-borrow p-1.5">
+                <TrendingUp className="w-3.5 h-3.5 text-borrow" />
+              </div>
+              <div>
+                <div className="text-[11px] text-text-muted">Bonzo Vaults</div>
+                <div className="text-sm font-bold text-text-primary">
+                  ${bonzo.vaultPositions.reduce((s, v) => s + v.usdValue, 0).toFixed(2)}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 pl-8">
+              {bonzo.vaultPositions.map((vp) => (
+                <div
+                  key={vp.vaultAddress}
+                  className="flex items-center justify-between text-[11px]"
+                >
+                  <span className="text-text-secondary truncate mr-2">
+                    {vp.name}
+                  </span>
+                  <span className="text-supply whitespace-nowrap">
+                    {vp.apy.toFixed(1)}% APY
+                  </span>
+                </div>
+              ))}
             </div>
           </motion.div>
         )}

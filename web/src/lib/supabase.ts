@@ -11,6 +11,7 @@ export interface ChatSession {
   id: string;
   wallet_address: string;
   title: string;
+  hcs_topic_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -146,4 +147,30 @@ export async function updateSessionTitle(sessionId: string, title: string): Prom
     .from('chat_sessions')
     .update({ title })
     .eq('id', sessionId);
+}
+
+// ── HCS Topic Persistence ───────────────────────────────────
+
+/**
+ * Save HCS topic ID for a chat session.
+ */
+export async function saveSessionTopicId(sessionId: string, hcsTopicId: string): Promise<void> {
+  await supabase
+    .from('chat_sessions')
+    .update({ hcs_topic_id: hcsTopicId })
+    .eq('id', sessionId);
+}
+
+/**
+ * Get all sessions that have an HCS topic ID (for the HCS viewer page).
+ */
+export async function getSessionsWithTopics(): Promise<ChatSession[]> {
+  const { data, error } = await supabase
+    .from('chat_sessions')
+    .select('*')
+    .not('hcs_topic_id', 'is', null)
+    .order('updated_at', { ascending: false });
+
+  if (error) throw new Error(`Failed to fetch HCS sessions: ${error.message}`);
+  return (data || []) as ChatSession[];
 }

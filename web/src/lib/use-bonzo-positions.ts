@@ -23,8 +23,24 @@ export interface BonzoPosition {
   assetAddress: string;
 }
 
+export interface BonzoVaultPosition {
+  /** Vault name (e.g., "USDC-HBAR") */
+  name: string;
+  /** Vault EVM address */
+  vaultAddress: string;
+  /** User's vault share token balance (human-readable) */
+  shares: number;
+  /** Estimated USD value of the position */
+  usdValue: number;
+  /** Vault APY */
+  apy: number;
+  /** Vault type */
+  type: 'single-asset-dex' | 'dual-asset-dex' | 'leveraged-lst';
+}
+
 export interface BonzoPositionsSummary {
   positions: BonzoPosition[];
+  vaultPositions: BonzoVaultPosition[];
   totalUsdValue: number;
   totalHbarValue: number;
   isLoading: boolean;
@@ -140,12 +156,113 @@ async function fetchBonzoPositions(
 }
 
 /**
+ * Fetch user positions from Bonzo Vaults (auto-compounding vaults).
+ * Queries vault contract balanceOf() for user's share tokens.
+ */
+async function fetchBonzoVaultPositions(
+  mirrorNodeUrl: string,
+  userEvmAddress: string,
+): Promise<BonzoVaultPosition[]> {
+  // Fetch vault data from Bonzo Vaults API
+  let vaults: Array<{
+    name: string;
+    contractAddress: string;
+    apy: string;
+    tvl: string;
+    assets: Array<{ symbol: string; decimals: number; price: string }>;
+    vaultType: string;
+    isHidden: boolean;
+  }> = [];
+
+  try {
+    const res = await fetch('https://mainnet-vaults.bonzo.finance/v1/api/vaults');
+    if (res.ok) {
+      const data = await res.json() as { vaults: typeof vaults };
+      vaults = data.vaults.filter((v) => !v.isHidden);
+    }
+  } catch {
+    return [];
+  }
+
+  if (vaults.length === 0) return [];
+
+  // Query balanceOf on each vault contract in parallel
+  const results = await Promise.all(
+    vaults.map(async (vault) => {
+      const balance = await queryBalanceOf(mirrorNodeUrl, vault.contractAddress, userEvmAddress);
+      return { vault, balance };
+    })
+  );
+
+  const positions: BonzoVaultPosition[] = [];
+
+  for (const { vault, balance } of results) {
+    if (balance === BigInt(0)) continue;
+
+    // Vault share tokens use 18 decimals (standard ERC-20 vault pattern)
+    const shares = Number(balance) / 1e18;
+
+    // Estimate USD value from TVL and total shares
+    // Simple approximation: shares * (TVL / totalSupply)
+    // Since we don't have totalSupply easily, use share value ≈ TVL proportion
+    // For display purposes, try to get pricePerShare if available
+    let usdValue = 0;
+    try {
+      // Query pricePerFullShare() = 0x77c7b8fc
+      const ppsRes = await fetch(`${mirrorNodeUrl}/api/v1/contracts/call`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          data: '0x77c7b8fc',
+          to: vault.contractAddress,
+          estimate: false,
+          blockNumber: 'latest',
+        }),
+      });
+
+      if (ppsRes.ok) {
+        const ppsData = await ppsRes.json() as { result?: string };
+        const pps = ppsData.result && ppsData.result.length > 2
+          ? Number(BigInt(ppsData.result)) / 1e18
+          : 1;
+        // pps is ratio of underlying per share
+        // For dual-asset vaults, underlying value ≈ pps * shares * asset0Price
+        const asset0Price = vault.assets[0] ? parseFloat(vault.assets[0].price) || 0 : 0;
+        if (asset0Price > 0) {
+          usdValue = shares * pps * asset0Price;
+        } else {
+          // Fallback: estimate from TVL
+          const tvl = parseFloat(vault.tvl) || 0;
+          usdValue = tvl > 0 ? shares * pps : 0;
+        }
+      }
+    } catch {
+      // Fallback: just show shares
+    }
+
+    const vaultType = vault.assets.length >= 2 ? 'dual-asset-dex' as const : 'single-asset-dex' as const;
+
+    positions.push({
+      name: vault.name,
+      vaultAddress: vault.contractAddress,
+      shares,
+      usdValue,
+      apy: parseFloat(vault.apy) || 0,
+      type: vaultType,
+    });
+  }
+
+  return positions;
+}
+
+/**
  * Hook to fetch user positions from Bonzo Finance on mainnet.
  * Uses Mirror Node contract call simulation — works with any wallet type.
  */
 export function useBonzoPositions(): BonzoPositionsSummary {
   const { address, accountId, isConnected } = useWallet();
   const [positions, setPositions] = useState<BonzoPosition[]>([]);
+  const [vaultPositions, setVaultPositions] = useState<BonzoVaultPosition[]>([]);
   const [totalUsdValue, setTotalUsdValue] = useState(0);
   const [totalHbarValue, setTotalHbarValue] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
@@ -193,10 +310,15 @@ export function useBonzoPositions(): BonzoPositionsSummary {
 
     try {
       const config = getNetworkConfig();
-      const result = await fetchBonzoPositions(config.mirrorNodeUrl, evmAddress);
-      setPositions(result.positions);
-      setTotalUsdValue(result.totalUsd);
-      setTotalHbarValue(result.totalHbar);
+      const [lendResult, vaultResult] = await Promise.all([
+        fetchBonzoPositions(config.mirrorNodeUrl, evmAddress),
+        fetchBonzoVaultPositions(config.mirrorNodeUrl, evmAddress).catch(() => [] as BonzoVaultPosition[]),
+      ]);
+      setPositions(lendResult.positions);
+      setVaultPositions(vaultResult);
+      const vaultUsd = vaultResult.reduce((sum, v) => sum + v.usdValue, 0);
+      setTotalUsdValue(lendResult.totalUsd + vaultUsd);
+      setTotalHbarValue(lendResult.totalHbar);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to fetch positions';
       setError(msg);
@@ -216,10 +338,11 @@ export function useBonzoPositions(): BonzoPositionsSummary {
     if (!isConnected) {
       setHasFetched(false);
       setPositions([]);
+      setVaultPositions([]);
       setTotalUsdValue(0);
       setTotalHbarValue(0);
     }
   }, [isConnected, hasFetched, refresh]);
 
-  return { positions, totalUsdValue, totalHbarValue, isLoading, error, refresh };
+  return { positions, vaultPositions, totalUsdValue, totalHbarValue, isLoading, error, refresh };
 }

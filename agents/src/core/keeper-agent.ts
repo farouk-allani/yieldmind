@@ -20,6 +20,8 @@ import { AgentExecutor, createToolCallingAgent } from '@langchain/classic/agents
 import { BufferMemory } from '@langchain/classic/memory';
 import type { HederaToolkitInstance } from './hedera-toolkit.js';
 import type { KeeperService } from './keeper-service.js';
+import type { HCSService } from '../hedera/hcs.js';
+import type { DecisionLog, HCSMessageType } from '../types/index.js';
 
 // ── Fallback model chain (same as LLMClient) ────────────────
 
@@ -200,6 +202,10 @@ export interface KeeperLoopConfig {
   model?: string;
   /** KeeperService for vault analysis */
   keeperService: KeeperService;
+  /** HCS service for publishing keeper decisions on-chain */
+  hcsService?: HCSService;
+  /** HCS topic ID for keeper decisions */
+  hcsTopicId?: string;
   /** Interval in ms between keeper runs (default: 5 minutes) */
   intervalMs?: number;
 }
@@ -210,6 +216,7 @@ export interface KeeperLoopState {
   nextRun: string | null;
   totalRuns: number;
   totalHarvests: number;
+  totalHarvestAttempts: number;
   recentDecisions: Array<{
     vault: string;
     action: string;
@@ -221,8 +228,9 @@ export interface KeeperLoopState {
 export function createKeeperLoop(config: KeeperLoopConfig): {
   start: () => void;
   stop: () => void;
-  getState: () => KeeperLoopState;
+  getState: () => KeeperLoopState & { hcsTopicId?: string | null };
   runOnce: () => Promise<KeeperLoopState>;
+  setHcsTopicId: (topicId: string) => void;
 } {
   const intervalMs = config.intervalMs || 5 * 60 * 1000; // 5 minutes
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -233,7 +241,35 @@ export function createKeeperLoop(config: KeeperLoopConfig): {
     nextRun: null,
     totalRuns: 0,
     totalHarvests: 0,
+    totalHarvestAttempts: 0,
     recentDecisions: [],
+  };
+
+  // Helper: publish a keeper decision to HCS
+  const publishToHCS = async (
+    action: string,
+    reasoning: string,
+    confidence: number,
+    data: Record<string, unknown>,
+    type: HCSMessageType = 'executor:harvest',
+  ) => {
+    if (!config.hcsService || !config.hcsTopicId) return;
+    try {
+      const decision: DecisionLog = {
+        agentId: 'keeper',
+        agentRole: 'sentinel',
+        action,
+        reasoning,
+        confidence,
+        timestamp: new Date().toISOString(),
+        sessionId: 'keeper-loop',
+        data,
+      };
+      await config.hcsService.publishDecision(config.hcsTopicId, type, decision);
+      console.log(`[KeeperLoop] Published to HCS: ${action}`);
+    } catch (err) {
+      console.warn('[KeeperLoop] HCS publish failed:', err);
+    }
   };
 
   const runOnce = async (): Promise<KeeperLoopState> => {
@@ -250,31 +286,117 @@ export function createKeeperLoop(config: KeeperLoopConfig): {
       for (const decision of decisions) {
         // If analysis recommends immediate harvest, attempt on-chain execution
         if (decision.action === 'harvest-now' && decision.vault.strategyAddress) {
+          state.totalHarvestAttempts++;
           try {
-            // Find the harvest tool from the toolkit
             const tools = config.toolkit.getAllTools();
             const harvestTool = tools.find((t: { name: string }) => t.name === 'harvest_bonzo_vault');
             if (harvestTool) {
-              console.log(`[KeeperLoop] Attempting harvest on ${decision.vault.name}...`);
+              console.log(`[KeeperLoop] Executing harvest on ${decision.vault.name} (strategy: ${decision.vault.strategyAddress})...`);
               const result = await (harvestTool as { invoke: (input: Record<string, string>) => Promise<string> }).invoke({
                 strategyAddress: decision.vault.strategyAddress,
                 vaultName: decision.vault.name,
                 reasoning: decision.reasoning,
               });
-              const parsed = JSON.parse(result);
+              const parsed = JSON.parse(result) as {
+                success?: boolean;
+                reason?: string;
+                txHash?: string;
+                hashscanUrl?: string;
+                message?: string;
+              };
+
               if (parsed.success) {
                 state.totalHarvests++;
-                console.log(`[KeeperLoop] Harvest succeeded: ${parsed.txHash}`);
+                console.log(`[KeeperLoop] Harvest SUCCESS on ${decision.vault.name}: ${parsed.txHash}`);
+                // Record harvest success as a decision
+                state.recentDecisions.unshift({
+                  vault: decision.vault.name,
+                  action: 'harvest-executed',
+                  reasoning: `Harvest successful! Tx: ${parsed.txHash}. ${decision.reasoning.slice(0, 150)}`,
+                  timestamp: startTime,
+                });
+                await publishToHCS(
+                  'keeper:harvest-executed',
+                  `Autonomous harvest on ${decision.vault.name}: ${decision.reasoning}`,
+                  decision.confidence,
+                  { vault: decision.vault.name, txHash: parsed.txHash, hashscanUrl: parsed.hashscanUrl },
+                );
+              } else if (parsed.reason === 'insufficient_rewards') {
+                console.log(`[KeeperLoop] ${decision.vault.name}: rewards not ready (IMF), will retry next cycle`);
+                // Record the attempt in decisions so user can see what happened
+                state.recentDecisions.unshift({
+                  vault: decision.vault.name,
+                  action: 'harvest-attempted',
+                  reasoning: `Harvest attempted but rewards still accumulating (IMF). Will retry next cycle. ${decision.reasoning.slice(0, 150)}`,
+                  timestamp: startTime,
+                });
+                await publishToHCS(
+                  'keeper:harvest-pending',
+                  `Harvest attempted for ${decision.vault.name}: rewards still accumulating. ${decision.reasoning}`,
+                  decision.confidence,
+                  {
+                    vault: decision.vault.name,
+                    reason: 'insufficient_rewards',
+                    volatility: decision.data.volatility,
+                    sentiment: decision.data.sentiment,
+                  },
+                );
               } else {
-                console.log(`[KeeperLoop] Harvest logged (restricted): ${decision.vault.name}`);
+                console.log(`[KeeperLoop] Harvest failed for ${decision.vault.name}: ${parsed.reason || parsed.message || 'unknown'}`);
+                state.recentDecisions.unshift({
+                  vault: decision.vault.name,
+                  action: 'harvest-failed',
+                  reasoning: `Harvest attempted but failed: ${parsed.message || parsed.reason || 'unknown error'}. ${decision.reasoning.slice(0, 100)}`,
+                  timestamp: startTime,
+                });
+                await publishToHCS(
+                  'keeper:harvest-failed',
+                  `Harvest attempt on ${decision.vault.name}: ${parsed.message || 'execution failed'}`,
+                  decision.confidence,
+                  { vault: decision.vault.name, reason: parsed.reason },
+                );
               }
+            } else {
+              console.warn('[KeeperLoop] harvest_bonzo_vault tool not found in toolkit');
             }
           } catch (harvestErr) {
-            console.warn(`[KeeperLoop] Harvest attempt failed for ${decision.vault.name}:`, harvestErr);
+            const errMsg = harvestErr instanceof Error ? harvestErr.message : String(harvestErr);
+            console.warn(`[KeeperLoop] Harvest error for ${decision.vault.name}:`, errMsg);
+            state.recentDecisions.unshift({
+              vault: decision.vault.name,
+              action: 'harvest-error',
+              reasoning: `Harvest execution error: ${errMsg.slice(0, 200)}`,
+              timestamp: startTime,
+            });
           }
+          // Skip pushing duplicate analysis decision — we already pushed the harvest result
+          continue;
+        } else if (decision.action === 'harvest-now' && !decision.vault.strategyAddress) {
+          // Harvest recommended but no strategy address — can't execute
+          state.recentDecisions.unshift({
+            vault: decision.vault.name,
+            action: 'harvest-skipped',
+            reasoning: `Harvest recommended but strategy address missing — cannot execute. ${decision.reasoning.slice(0, 200)}`,
+            timestamp: startTime,
+          });
+          continue;
+        } else if (decision.action === 'monitor' || decision.action === 'harvest-delay') {
+          // Publish monitoring decisions to HCS too — shows the keeper is actively watching
+          await publishToHCS(
+            `keeper:${decision.action}`,
+            decision.reasoning,
+            decision.confidence,
+            {
+              vault: decision.vault.name,
+              apy: decision.vault.apy,
+              volatility: decision.data.volatility,
+              sentiment: decision.data.sentiment,
+            },
+            'sentinel:alert',
+          );
         }
 
-        // Store decision
+        // Store decision in state for the dashboard
         state.recentDecisions.unshift({
           vault: decision.vault.name,
           action: decision.action,
@@ -283,12 +405,12 @@ export function createKeeperLoop(config: KeeperLoopConfig): {
         });
       }
 
-      // Keep only last 20 decisions
-      if (state.recentDecisions.length > 20) {
-        state.recentDecisions = state.recentDecisions.slice(0, 20);
+      // Keep only last 50 decisions (harvest attempts + monitoring)
+      if (state.recentDecisions.length > 50) {
+        state.recentDecisions = state.recentDecisions.slice(0, 50);
       }
 
-      console.log(`[KeeperLoop] Analysis complete. ${decisions.length} decisions, ${state.totalHarvests} total harvests.`);
+      console.log(`[KeeperLoop] Analysis complete. ${decisions.length} vaults analyzed, ${state.totalHarvests} total harvests.`);
     } catch (error) {
       console.error('[KeeperLoop] Error during analysis:', error);
       state.recentDecisions.unshift({
@@ -324,7 +446,15 @@ export function createKeeperLoop(config: KeeperLoopConfig): {
     console.log('[KeeperLoop] Stopped.');
   };
 
-  const getState = (): KeeperLoopState => ({ ...state });
+  const getState = (): KeeperLoopState & { hcsTopicId?: string | null } => ({
+    ...state,
+    hcsTopicId: config.hcsTopicId || null,
+  });
 
-  return { start, stop, getState, runOnce };
+  const setHcsTopicId = (topicId: string) => {
+    config.hcsTopicId = topicId;
+    console.log(`[KeeperLoop] HCS topic set: ${topicId}`);
+  };
+
+  return { start, stop, getState, runOnce, setHcsTopicId };
 }

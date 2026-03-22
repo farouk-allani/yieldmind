@@ -107,6 +107,8 @@ export interface ChatResponse {
   strategy?: Strategy;
   decisions: DecisionLog[];
   mode?: 'autonomous' | 'autonomous-unavailable';
+  /** HCS topic ID for this session's decision trail */
+  hcsTopicId?: string;
 }
 
 export interface ChatMessage {

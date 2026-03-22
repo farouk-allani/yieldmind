@@ -103,8 +103,21 @@ export function createRuntime() {
         openRouterApiKey: openRouterKey,
         model: process.env.LLM_MODEL,
         keeperService,
+        hcsService,
+        hcsTopicId: process.env.HCS_GLOBAL_TOPIC_ID || undefined,
         intervalMs: parseInt(process.env.KEEPER_INTERVAL_MS || '300000', 10),
       });
+
+      // Auto-create keeper HCS topic if not configured
+      if (!process.env.HCS_GLOBAL_TOPIC_ID) {
+        hcsService.createTopic('YieldMind Keeper Agent — Decision Trail').then((topicId) => {
+          console.log(`   Keeper HCS topic auto-created: ${topicId}`);
+          // Update the keeper loop config with the new topic
+          keeperLoop!.setHcsTopicId(topicId);
+        }).catch((err) => {
+          console.warn('   Failed to auto-create keeper HCS topic:', err);
+        });
+      }
 
       console.log('   Agent Kit: Hedera Agent Kit initialized (AUTONOMOUS mode, mainnet)');
       console.log(`   Keeper Agent: LangChain ReAct agent with ${hederaToolkit.getAllTools().length} tools`);

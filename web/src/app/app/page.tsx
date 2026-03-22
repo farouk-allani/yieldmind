@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Database, BarChart3 } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Database, BarChart3, ScrollText, Activity, Rocket } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { ChatInterface } from '@/components/chat/chat-interface';
@@ -18,6 +18,8 @@ export default function AppPage() {
   const [agents, setAgents] = useState<AgentState[]>([]);
   const [decisions, setDecisions] = useState<DecisionLog[]>([]);
   const [activeStrategy, setActiveStrategy] = useState<Strategy | null>(null);
+  const [hcsTopicId, setHcsTopicId] = useState<string | null>(null);
+  const [keeperRunning, setKeeperRunning] = useState(false);
 
   useEffect(() => {
     fetchAgentStatus()
@@ -26,6 +28,22 @@ export default function AppPage() {
         // Agent backend not ready yet — will populate after first chat
       });
   }, []);
+
+  const pollKeeperStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/keeper/status');
+      if (res.ok) {
+        const data = await res.json();
+        setKeeperRunning(data.isRunning ?? false);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    pollKeeperStatus();
+    const interval = setInterval(pollKeeperStatus, 15_000);
+    return () => clearInterval(interval);
+  }, [pollKeeperStatus]);
 
   return (
     <main className="h-screen flex flex-col">
@@ -54,6 +72,36 @@ export default function AppPage() {
             >
               <BarChart3 className="w-3 h-3" />
               Portfolio
+            </Link>
+            <Link
+              href="/hcs"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] bg-surface border border-border-subtle text-[11px] text-text-secondary font-medium hover:bg-surface-hover transition-colors"
+            >
+              <ScrollText className="w-3 h-3" />
+              HCS Trail
+            </Link>
+            <Link
+              href="/app/keeper"
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] border text-[11px] font-medium transition-colors ${
+                keeperRunning
+                  ? 'bg-supply/10 border-supply/20 text-supply'
+                  : 'bg-surface border-border-subtle text-text-secondary hover:bg-surface-hover'
+              }`}
+            >
+              <Activity className="w-3 h-3" />
+              Keeper
+              <div
+                className={`w-1.5 h-1.5 rounded-full ${
+                  keeperRunning ? 'bg-supply animate-pulse' : 'bg-text-muted'
+                }`}
+              />
+            </Link>
+            <Link
+              href="/app/business"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] bg-surface border border-border-subtle text-[11px] text-text-secondary font-medium hover:bg-surface-hover transition-colors"
+            >
+              <Rocket className="w-3 h-3" />
+              Business
             </Link>
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[8px] bg-supply/10 text-[11px] text-supply font-medium">
               <Database className="w-3 h-3" />
@@ -86,18 +134,21 @@ export default function AppPage() {
             onStrategyUpdate={(strategy) =>
               strategy && setActiveStrategy(strategy)
             }
+            onHcsTopicUpdate={(topicId) =>
+              topicId && setHcsTopicId(topicId)
+            }
           />
         </div>
 
         {/* Dashboard sidebar */}
-        <aside className="w-80 flex-shrink-0 overflow-y-auto bg-page p-4 space-y-6 hidden lg:block">
+        <aside className="w-80 flex-shrink-0 overflow-y-auto bg-page p-4 space-y-6 hidden md:block">
           <PositionPanel activeStrategy={activeStrategy} />
           <div className="border-t border-border-subtle" />
           <AgentStatusPanel agents={agents} />
           <div className="border-t border-border-subtle" />
           <KeeperPanel />
           <div className="border-t border-border-subtle" />
-          <DecisionLogPanel decisions={decisions} />
+          <DecisionLogPanel decisions={decisions} hcsTopicId={hcsTopicId} />
         </aside>
       </div>
     </main>
