@@ -417,9 +417,7 @@ function WalletPickerModal({
               disabled={isConnecting}
               className="flex items-center gap-3 w-full px-3 py-3 rounded-[8px] bg-surface border border-border-subtle hover:bg-elevated transition-colors disabled:opacity-50"
             >
-              <div className="w-9 h-9 rounded-full bg-[#8B5CF6]/20 flex items-center justify-center text-lg font-bold text-[#8B5CF6]">
-                H
-              </div>
+              <img src="/wallets/hashpack.webp" alt="HashPack" className="w-9 h-9 rounded-[8px]" />
               <div className="text-left">
                 <div className="text-sm font-medium text-text-primary">HashPack</div>
                 <div className="text-[11px] text-text-muted">Hedera native wallet</div>
@@ -437,9 +435,7 @@ function WalletPickerModal({
               disabled={isConnecting}
               className="flex items-center gap-3 w-full px-3 py-3 rounded-[8px] bg-surface border border-border-subtle hover:bg-elevated transition-colors disabled:opacity-50"
             >
-              <div className="w-9 h-9 rounded-full bg-[#3B82F6]/20 flex items-center justify-center text-lg font-bold text-[#3B82F6]">
-                K
-              </div>
+              <img src="/wallets/kabila.png" alt="Kabila" className="w-9 h-9 rounded-[8px]" />
               <div className="text-left">
                 <div className="text-sm font-medium text-text-primary">Kabila / Other</div>
                 <div className="text-[11px] text-text-muted">WalletConnect compatible</div>
@@ -453,8 +449,8 @@ function WalletPickerModal({
             disabled={isConnecting}
             className="flex items-center gap-3 w-full px-3 py-3 rounded-[8px] bg-surface border border-border-subtle hover:bg-elevated transition-colors disabled:opacity-50"
           >
-            <div className="w-9 h-9 rounded-full bg-[#F6851B]/20 flex items-center justify-center text-lg font-bold text-[#F6851B]">
-              M
+            <div className="w-9 h-9 rounded-[8px] bg-white flex items-center justify-center overflow-hidden">
+              <img src="/wallets/metamask.webp" alt="MetaMask" className="w-7 h-7" />
             </div>
             <div className="text-left">
               <div className="text-sm font-medium text-text-primary">

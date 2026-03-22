@@ -51,6 +51,12 @@ export function Navbar() {
           >
             Agents
           </Link>
+          <Link
+            href="/app/business"
+            className="text-sm text-text-secondary hover:text-text-primary transition-colors hidden md:block"
+          >
+            Business
+          </Link>
           <a
             href="https://github.com/farouk-allani/yieldmind"
             target="_blank"

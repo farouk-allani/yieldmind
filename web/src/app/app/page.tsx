@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Database, BarChart3, ScrollText, Activity, Rocket } from 'lucide-react';
+import { Database, BarChart3, ScrollText, Activity } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { ChatInterface } from '@/components/chat/chat-interface';
@@ -95,13 +95,6 @@ export default function AppPage() {
                   keeperRunning ? 'bg-supply animate-pulse' : 'bg-text-muted'
                 }`}
               />
-            </Link>
-            <Link
-              href="/app/business"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-[8px] bg-surface border border-border-subtle text-[11px] text-text-secondary font-medium hover:bg-surface-hover transition-colors"
-            >
-              <Rocket className="w-3 h-3" />
-              Business
             </Link>
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-[8px] bg-supply/10 text-[11px] text-supply font-medium">
               <Database className="w-3 h-3" />
