@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/public/logo without text.png" alt="YieldMind" width="100" />
+  <img src="web/public/logo without text.png" alt="YieldMind" width="200" />
 </p>
 
 <h1 align="center">YieldMind Protocol</h1>
