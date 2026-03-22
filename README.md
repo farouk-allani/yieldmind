@@ -26,11 +26,11 @@
 | | |
 |---|---|
 | **Event** | Hedera Hello Future Apex Hackathon 2026 |
-| **Track** | AI & Agents (Main Track — $40K pool) |
+| **Track** | AI & Agents (Main Track) |
 | **Bounty** | Bonzo Finance ($8K pool) — Intelligent Keeper Agent with Hedera Agent Kit |
-| **Deadline** | March 23, 2026, 11:59 PM ET |
 
-### Project Description (100 words)
+
+### Project Description
 
 YieldMind is an autonomous DeFi coordination layer where 4 specialized AI agents (Scout, Strategist, Executor, Sentinel) collaborate to manage yield strategies on Bonzo Finance. Users express intent in natural language — "I want safe yield on my HBAR" — and the agents scan vaults, build strategies, execute deposits, and harvest rewards autonomously via Hedera Agent Kit. An intelligent keeper loop analyzes volatility and sentiment data to optimize harvest timing. Every agent decision is logged to Hedera Consensus Service with human-readable reasoning, creating a fully auditable on-chain AI decision trail. No black boxes — every AI thought is verifiable on HashScan.
 
@@ -52,7 +52,7 @@ YieldMind is an autonomous DeFi coordination layer where 4 specialized AI agents
 
 ### System Overview
 
-> **[View Interactive Diagram on Excalidraw](https://excalidraw.com/#json=TI-g1LKVKv4QlUUQzoquX,r0h8t87f0oCQvKzaBTHGqg)**
+> **[View Interactive Diagram on Excalidraw](https://excalidraw.com/#json=3GNpf7E1I_dY3crHPiE3H,ug9zbrqP_D2hKb8GkriTxw)**
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -102,7 +102,7 @@ YieldMind is an autonomous DeFi coordination layer where 4 specialized AI agents
 
 ### Keeper Agent — Autonomous Decision Flow
 
-> **[View Interactive Diagram on Excalidraw](https://excalidraw.com/#json=eZEDSHgmdua5Ag7DjDWAl,KyzNowANeti5mEsA3SC_xA)**
+> **[View Interactive Diagram on Excalidraw](https://excalidraw.com/#json=xL4Fj1IXiG0ERAVJ9pO38,HvQ60L3YY-x1ly0j_AZO5Q)**
 
 ```
               ┌──────────────────┐
