@@ -30,6 +30,7 @@
   "author": "Farouk",
   "license": "MIT",
   "dependencies": {
-    "@hiero-ledger/proto": "^2.25.0"
+    "@hiero-ledger/proto": "^2.25.0",
+    "next": "^14.2.0"
   }
 }
